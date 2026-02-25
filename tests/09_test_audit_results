@@ -1,0 +1,46 @@
+================================================================================
+TEST EXECUTION RESULTS: 09_test_audit.sql
+================================================================================
+Execution Date: 2026-02-25
+Environment: MEDICORE_GOVERNANCE_DB.AUDIT
+Role: ACCOUNTADMIN
+Warehouse: COMPUTE_WH
+================================================================================
+
+TEST_ID     | TEST_NAME                                      | EXPECTED      | ACTUAL        | STATUS
+------------|------------------------------------------------|---------------|---------------|--------
+TC_09_001   | V_LOGIN_HISTORY exists                         | EXISTS        | EXISTS        | PASS
+TC_09_002   | V_QUERY_HISTORY exists                         | EXISTS        | NOT_FOUND     | FAIL
+TC_09_003   | V_ACCESS_HISTORY exists                        | EXISTS        | NOT_FOUND     | FAIL
+TC_09_004   | V_ROLE_GRANTS_CHANGES exists                   | EXISTS        | NOT_FOUND     | FAIL
+TC_09_005   | V_POLICY_REFERENCES exists                     | EXISTS        | NOT_FOUND     | FAIL
+TC_09_006   | V_DATA_CLASSIFICATION_AUDIT exists             | EXISTS        | NOT_FOUND     | FAIL
+TC_09_007   | V_LOGIN_HISTORY has required columns           | 13 columns    | 13 columns    | PASS
+TC_09_008   | V_LOGIN_HISTORY is queryable                   | QUERYABLE     | 10 rows       | PASS
+TC_09_009   | LOGIN_STATUS classification works              | SUCCESS/FAIL  | SUCCESS       | PASS
+TC_09_010   | RISK_LEVEL classification works                | LOW/MED/HIGH  | MEDIUM        | PASS
+
+================================================================================
+SUMMARY
+================================================================================
+Total Tests:  10
+Passed:       5
+Failed:       5
+Pass Rate:    50%
+
+================================================================================
+FAILED TESTS DETAILS
+================================================================================
+TC_09_002: V_QUERY_HISTORY view does not exist in AUDIT schema
+TC_09_003: V_ACCESS_HISTORY view does not exist in AUDIT schema
+TC_09_004: V_ROLE_GRANTS_CHANGES view does not exist in AUDIT schema
+TC_09_005: V_POLICY_REFERENCES view does not exist in AUDIT schema
+TC_09_006: V_DATA_CLASSIFICATION_AUDIT view does not exist in AUDIT schema
+
+================================================================================
+NOTES
+================================================================================
+- V_LOGIN_HISTORY view exists and functions correctly with all expected columns
+- 5 audit views are missing and need to be created
+- LOGIN_STATUS and RISK_LEVEL derived columns working as expected
+================================================================================
