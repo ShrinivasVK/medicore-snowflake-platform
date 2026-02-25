@@ -3,13 +3,27 @@
 -- ============================================================
 -- Phase 00: GitHub Integration - TEST CASES
 -- File: 00_test_git_setup.sql
+-- Version: 2.0.0
+--
+-- Change Reason: Updated all references from GOVERNANCE_DB to
+--               MEDICORE_GOVERNANCE_DB to align with refined
+--               database naming convention established in
+--               Phase 01 v2.0.0. All schema references, secret
+--               paths, repository paths, and LIST stage paths
+--               updated accordingly. GIT REPOSITORY object now
+--               uses fully qualified three-part name
+--               MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO
+--               to prevent session context errors.
 --
 -- Description:
 --   Comprehensive test cases to validate Phase 00 GitHub Integration
---   implementation including secrets, API integration, and Git repository.
+--   implementation including secrets, API integration, and Git
+--   repository. All objects live in MEDICORE_GOVERNANCE_DB.SECURITY
+--   as bootstrapped by Phase 01.
 --
 -- How to Run:
 --   - Execute as ACCOUNTADMIN
+--   - Phase 01 must be completed before running these tests
 --   - Run each test case individually
 --   - Record PASS/FAIL in 00_test_results_log.md
 --
@@ -18,6 +32,8 @@
 -- ============================================================
 
 USE ROLE ACCOUNTADMIN;
+USE DATABASE MEDICORE_GOVERNANCE_DB;
+USE SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
 
 -- ============================================================
 -- TEST CATEGORY: EXISTENCE - Verify all objects were created
@@ -27,10 +43,11 @@ USE ROLE ACCOUNTADMIN;
 -- TEST ID   : TC_00_001
 -- Phase     : 00 - GitHub Integration
 -- Category  : EXISTENCE
--- Description: Verify GITHUB_TOKEN secret exists in GOVERNANCE_DB.SECURITY
--- Expected  : Secret named GITHUB_TOKEN exists with type PASSWORD
+-- Description: Verify GITHUB_TOKEN secret exists in
+--              MEDICORE_GOVERNANCE_DB.SECURITY
+-- Expected  : Secret named GITHUB_TOKEN is listed
 -- ------------------------------------------------------------
-SHOW SECRETS LIKE 'GITHUB_TOKEN' IN SCHEMA GOVERNANCE_DB.SECURITY;
+SHOW SECRETS LIKE 'GITHUB_TOKEN' IN SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -39,7 +56,7 @@ SHOW SECRETS LIKE 'GITHUB_TOKEN' IN SCHEMA GOVERNANCE_DB.SECURITY;
 -- Phase     : 00 - GitHub Integration
 -- Category  : EXISTENCE
 -- Description: Verify MEDICORE_GITHUB_INTEGRATION API integration exists
--- Expected  : API integration exists and is of type EXTERNAL_API
+-- Expected  : API integration is listed and enabled
 -- ------------------------------------------------------------
 SHOW API INTEGRATIONS LIKE 'MEDICORE_GITHUB_INTEGRATION';
 -- RESULT: [ ] PASS  [ ] FAIL
@@ -50,9 +67,10 @@ SHOW API INTEGRATIONS LIKE 'MEDICORE_GITHUB_INTEGRATION';
 -- Phase     : 00 - GitHub Integration
 -- Category  : EXISTENCE
 -- Description: Verify MEDICORE_PLATFORM_REPO Git repository exists
--- Expected  : Git repository exists in GOVERNANCE_DB.SECURITY schema
+--              in MEDICORE_GOVERNANCE_DB.SECURITY schema
+-- Expected  : Git repository is listed
 -- ------------------------------------------------------------
-SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA GOVERNANCE_DB.SECURITY;
+SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -67,15 +85,15 @@ SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA GOVERNANCE_DB.SECU
 -- Description: Verify GITHUB_TOKEN secret is of type PASSWORD
 -- Expected  : secret_type = 'PASSWORD'
 -- ------------------------------------------------------------
-SELECT 
-    name,
-    secret_type,
-    database_name,
-    schema_name
-FROM TABLE(RESULT_SCAN(LAST_QUERY_ID(-3)))
-WHERE name = 'GITHUB_TOKEN' AND secret_type = 'PASSWORD';
--- Re-run if needed:
--- SHOW SECRETS LIKE 'GITHUB_TOKEN' IN SCHEMA GOVERNANCE_DB.SECURITY;
+SHOW SECRETS LIKE 'GITHUB_TOKEN' IN SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
+SELECT
+    "name",
+    "secret_type",
+    "database_name",
+    "schema_name"
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'GITHUB_TOKEN'
+  AND "secret_type" = 'PASSWORD';
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -84,17 +102,17 @@ WHERE name = 'GITHUB_TOKEN' AND secret_type = 'PASSWORD';
 -- Phase     : 00 - GitHub Integration
 -- Category  : CONFIGURATION
 -- Description: Verify API integration is enabled
--- Expected  : enabled = true
+-- Expected  : enabled = 'true'
 -- ------------------------------------------------------------
-SELECT 
-    name,
-    enabled,
-    type,
-    category
-FROM TABLE(RESULT_SCAN(LAST_QUERY_ID(-4)))
-WHERE name = 'MEDICORE_GITHUB_INTEGRATION';
--- Re-run if needed:
--- SHOW API INTEGRATIONS LIKE 'MEDICORE_GITHUB_INTEGRATION';
+SHOW API INTEGRATIONS LIKE 'MEDICORE_GITHUB_INTEGRATION';
+SELECT
+    "name",
+    "enabled",
+    "type",
+    "category"
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'MEDICORE_GITHUB_INTEGRATION'
+  AND "enabled" = 'true';
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -105,15 +123,15 @@ WHERE name = 'MEDICORE_GITHUB_INTEGRATION';
 -- Description: Verify Git repository origin URL is correct
 -- Expected  : origin = 'https://github.com/ShrinivasVK/medicore-snowflake-platform.git'
 -- ------------------------------------------------------------
-SELECT 
-    name,
-    origin,
-    api_integration,
-    git_credentials
-FROM TABLE(RESULT_SCAN(LAST_QUERY_ID(-5)))
-WHERE name = 'MEDICORE_PLATFORM_REPO';
--- Re-run if needed:
--- SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA GOVERNANCE_DB.SECURITY;
+SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
+SELECT
+    "name",
+    "origin",
+    "api_integration",
+    "git_credentials"
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'MEDICORE_PLATFORM_REPO'
+  AND "origin" = 'https://github.com/ShrinivasVK/medicore-snowflake-platform.git';
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -124,12 +142,12 @@ WHERE name = 'MEDICORE_PLATFORM_REPO';
 -- Description: Verify Git repository uses correct API integration
 -- Expected  : api_integration = 'MEDICORE_GITHUB_INTEGRATION'
 -- ------------------------------------------------------------
-SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA GOVERNANCE_DB.SECURITY;
-SELECT 
-    name,
-    api_integration
+SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
+SELECT
+    "name",
+    "api_integration"
 FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE api_integration = 'MEDICORE_GITHUB_INTEGRATION';
+WHERE "api_integration" = 'MEDICORE_GITHUB_INTEGRATION';
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -138,14 +156,15 @@ WHERE api_integration = 'MEDICORE_GITHUB_INTEGRATION';
 -- Phase     : 00 - GitHub Integration
 -- Category  : CONFIGURATION
 -- Description: Verify Git repository uses correct credentials secret
--- Expected  : git_credentials = 'GOVERNANCE_DB.SECURITY.GITHUB_TOKEN'
+-- Expected  : git_credentials references
+--             MEDICORE_GOVERNANCE_DB.SECURITY.GITHUB_TOKEN
 -- ------------------------------------------------------------
-SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA GOVERNANCE_DB.SECURITY;
-SELECT 
-    name,
-    git_credentials
+SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
+SELECT
+    "name",
+    "git_credentials"
 FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE git_credentials = 'GOVERNANCE_DB.SECURITY.GITHUB_TOKEN';
+WHERE "git_credentials" LIKE '%MEDICORE_GOVERNANCE_DB%SECURITY%GITHUB_TOKEN%';
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -157,16 +176,18 @@ WHERE git_credentials = 'GOVERNANCE_DB.SECURITY.GITHUB_TOKEN';
 -- TEST ID   : TC_00_009
 -- Phase     : 00 - GitHub Integration
 -- Category  : SECURITY
--- Description: Verify secret is in correct schema (GOVERNANCE_DB.SECURITY)
--- Expected  : database_name = 'GOVERNANCE_DB', schema_name = 'SECURITY'
+-- Description: Verify secret is stored in correct database and schema
+-- Expected  : database_name = 'MEDICORE_GOVERNANCE_DB',
+--             schema_name   = 'SECURITY'
 -- ------------------------------------------------------------
-SHOW SECRETS LIKE 'GITHUB_TOKEN' IN SCHEMA GOVERNANCE_DB.SECURITY;
-SELECT 
-    name,
-    database_name,
-    schema_name
+SHOW SECRETS LIKE 'GITHUB_TOKEN' IN SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
+SELECT
+    "name",
+    "database_name",
+    "schema_name"
 FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE database_name = 'GOVERNANCE_DB' AND schema_name = 'SECURITY';
+WHERE "database_name" = 'MEDICORE_GOVERNANCE_DB'
+  AND "schema_name"   = 'SECURITY';
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -174,16 +195,18 @@ WHERE database_name = 'GOVERNANCE_DB' AND schema_name = 'SECURITY';
 -- TEST ID   : TC_00_010
 -- Phase     : 00 - GitHub Integration
 -- Category  : SECURITY
--- Description: Verify Git repository is in correct schema (GOVERNANCE_DB.SECURITY)
--- Expected  : database_name = 'GOVERNANCE_DB', schema_name = 'SECURITY'
+-- Description: Verify Git repository is in correct database and schema
+-- Expected  : database_name = 'MEDICORE_GOVERNANCE_DB',
+--             schema_name   = 'SECURITY'
 -- ------------------------------------------------------------
-SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA GOVERNANCE_DB.SECURITY;
-SELECT 
-    name,
-    database_name,
-    schema_name
+SHOW GIT REPOSITORIES LIKE 'MEDICORE_PLATFORM_REPO' IN SCHEMA MEDICORE_GOVERNANCE_DB.SECURITY;
+SELECT
+    "name",
+    "database_name",
+    "schema_name"
 FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-WHERE database_name = 'GOVERNANCE_DB' AND schema_name = 'SECURITY';
+WHERE "database_name" = 'MEDICORE_GOVERNANCE_DB'
+  AND "schema_name"   = 'SECURITY';
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -197,8 +220,10 @@ WHERE database_name = 'GOVERNANCE_DB' AND schema_name = 'SECURITY';
 -- Category  : FUNCTIONALITY
 -- Description: Verify repository can be fetched successfully
 -- Expected  : Command completes without error
+-- Note      : Uses fully qualified name to avoid session
+--             context errors
 -- ------------------------------------------------------------
-ALTER GIT REPOSITORY GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO FETCH;
+ALTER GIT REPOSITORY MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO FETCH;
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -209,7 +234,7 @@ ALTER GIT REPOSITORY GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO FETCH;
 -- Description: Verify repository branches are visible
 -- Expected  : At least 'main' branch is listed
 -- ------------------------------------------------------------
-SHOW GIT BRANCHES IN GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO;
+SHOW GIT BRANCHES IN MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO;
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -217,10 +242,10 @@ SHOW GIT BRANCHES IN GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO;
 -- TEST ID   : TC_00_013
 -- Phase     : 00 - GitHub Integration
 -- Category  : FUNCTIONALITY
--- Description: Verify files are accessible in repository
--- Expected  : Files listed from infrastructure folder
+-- Description: Verify files are accessible in repository root
+-- Expected  : Files and folders listed from main branch root
 -- ------------------------------------------------------------
-LIST @GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/infrastructure/;
+LIST @MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/;
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -231,7 +256,7 @@ LIST @GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/infrastructure
 -- Description: Verify Phase 00 implementation file exists in repo
 -- Expected  : 00_github_integration.sql file is listed
 -- ------------------------------------------------------------
-LIST @GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/infrastructure/00_git-setup/;
+LIST @MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/infrastructure/00_git-setup/;
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -242,7 +267,7 @@ LIST @GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/infrastructure
 -- Description: Verify Phase 01 implementation file exists in repo
 -- Expected  : 01_account_administration.sql file is listed
 -- ------------------------------------------------------------
-LIST @GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/infrastructure/01_account-admin/;
+LIST @MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/infrastructure/01_account-admin/;
 -- RESULT: [ ] PASS  [ ] FAIL
 -- NOTES :
 
@@ -252,23 +277,33 @@ LIST @GOVERNANCE_DB.SECURITY.MEDICORE_PLATFORM_REPO/branches/main/infrastructure
 -- Total Test Cases: 15
 --
 -- Test Checklist:
--- [ ] TC_00_001 - Secret GITHUB_TOKEN exists
--- [ ] TC_00_002 - API integration exists
--- [ ] TC_00_003 - Git repository exists
+--
+-- EXISTENCE (3 tests):
+-- [ ] TC_00_001 - GITHUB_TOKEN secret exists in MEDICORE_GOVERNANCE_DB.SECURITY
+-- [ ] TC_00_002 - MEDICORE_GITHUB_INTEGRATION API integration exists
+-- [ ] TC_00_003 - MEDICORE_PLATFORM_REPO Git repository exists
+--
+-- CONFIGURATION (5 tests):
 -- [ ] TC_00_004 - Secret type is PASSWORD
 -- [ ] TC_00_005 - API integration is enabled
--- [ ] TC_00_006 - Repository origin URL correct
+-- [ ] TC_00_006 - Repository origin URL is correct
 -- [ ] TC_00_007 - Repository uses correct API integration
--- [ ] TC_00_008 - Repository uses correct credentials
--- [ ] TC_00_009 - Secret in correct schema
--- [ ] TC_00_010 - Repository in correct schema
--- [ ] TC_00_011 - Repository fetch works
--- [ ] TC_00_012 - Branches are visible
--- [ ] TC_00_013 - Files are accessible
--- [ ] TC_00_014 - Phase 00 file exists in repo
--- [ ] TC_00_015 - Phase 01 file exists in repo
+-- [ ] TC_00_008 - Repository uses correct credentials secret
+--
+-- SECURITY (2 tests):
+-- [ ] TC_00_009 - Secret is in MEDICORE_GOVERNANCE_DB.SECURITY
+-- [ ] TC_00_010 - Repository is in MEDICORE_GOVERNANCE_DB.SECURITY
+--
+-- FUNCTIONALITY (5 tests):
+-- [ ] TC_00_011 - Repository fetch completes without error
+-- [ ] TC_00_012 - Repository branches are visible
+-- [ ] TC_00_013 - Repository root files are accessible
+-- [ ] TC_00_014 - Phase 00 implementation file exists in repo
+-- [ ] TC_00_015 - Phase 01 implementation file exists in repo
 --
 -- OVERALL PHASE 00 RESULT: [ ] PASS  [ ] FAIL
 -- Tested By:
 -- Test Date:
+-- ============================================================
+-- END OF PHASE 00 TEST CASES
 -- ============================================================

@@ -3,7 +3,7 @@
 **Phase:** 01 - Account Administration  
 **Account:** hsc89993  
 **Executed By:** SNFSHREEAWS04USEASTNV  
-**Execution Date:** 2026-02-24  
+**Execution Date:** 2026-02-25  
 **Role:** ACCOUNTADMIN  
 
 ---
@@ -30,12 +30,12 @@
 
 | Test ID | Description | Expected | Actual | Result |
 |---------|-------------|----------|--------|--------|
-| TC_01_001 | GOVERNANCE_DB database exists | Database listed | GOVERNANCE_DB exists | ✅ PASS |
-| TC_01_002 | SECURITY schema exists in GOVERNANCE_DB | Schema listed | SECURITY schema exists | ✅ PASS |
-| TC_01_003 | MEDICORE_ALLOWED_IPS network rule exists | Rule in GOVERNANCE_DB.SECURITY | Rule exists | ✅ PASS |
-| TC_01_004 | MEDICORE_NETWORK_POLICY exists | Policy listed | Policy exists | ✅ PASS |
-| TC_01_005 | MEDICORE_PASSWORD_POLICY exists | Policy in GOVERNANCE_DB.SECURITY | Policy exists | ✅ PASS |
-| TC_01_006 | MEDICORE_SESSION_POLICY exists | Policy in GOVERNANCE_DB.SECURITY | Policy exists | ✅ PASS |
+| TC_01_001 | MEDICORE_GOVERNANCE_DB database exists | Database listed | Created 2026-02-25 07:44:00.806 | ✅ PASS |
+| TC_01_002 | SECURITY schema exists | Schema listed | Created 2026-02-25 07:44:01.443 | ✅ PASS |
+| TC_01_003 | MEDICORE_ALLOWED_IPS network rule exists | Rule exists | IPV4/INGRESS, 1 entry | ✅ PASS |
+| TC_01_004 | MEDICORE_NETWORK_POLICY exists | Policy listed | Created 2026-02-25 07:51:51.328 | ✅ PASS |
+| TC_01_005 | MEDICORE_PASSWORD_POLICY exists | Policy exists | Created 2026-02-25 07:44:04.837 | ✅ PASS |
+| TC_01_006 | MEDICORE_SESSION_POLICY exists | Policy exists | Created 2026-02-25 07:44:06.651 | ✅ PASS |
 
 ---
 
@@ -45,8 +45,8 @@
 |---------|-------------|----------|--------|--------|
 | TC_01_007 | Network policy applied at account level | MEDICORE_NETWORK_POLICY | MEDICORE_NETWORK_POLICY | ✅ PASS |
 | TC_01_008 | Network rule type and mode | IPV4 / INGRESS | IPV4 / INGRESS | ✅ PASS |
-| TC_01_028 | Password policy applied at account level | ref_entity_domain = ACCOUNT | ACCOUNT | ✅ PASS |
-| TC_01_029 | Session policy applied at account level | ref_entity_domain = ACCOUNT | ACCOUNT | ✅ PASS |
+| TC_01_028 | Password policy applied at account level | ref_entity_domain = ACCOUNT | HSC89993 / ACCOUNT / ACTIVE | ✅ PASS |
+| TC_01_029 | Session policy applied at account level | ref_entity_domain = ACCOUNT | HSC89993 / ACCOUNT / ACTIVE | ✅ PASS |
 | TC_01_030 | Network policy has 1 allowed network rule | entries_in_allowed_network_rules = 1 | 1 | ✅ PASS |
 
 ---
@@ -102,12 +102,12 @@
 
 | Object Type | Fully Qualified Name | Status |
 |-------------|---------------------|--------|
-| Database | `GOVERNANCE_DB` | ✅ Created |
-| Schema | `GOVERNANCE_DB.SECURITY` | ✅ Created |
-| Network Rule | `GOVERNANCE_DB.SECURITY.MEDICORE_ALLOWED_IPS` | ✅ Created |
+| Database | `MEDICORE_GOVERNANCE_DB` | ✅ Created |
+| Schema | `MEDICORE_GOVERNANCE_DB.SECURITY` | ✅ Created |
+| Network Rule | `MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_ALLOWED_IPS` | ✅ Created |
 | Network Policy | `MEDICORE_NETWORK_POLICY` | ✅ Created & Applied |
-| Password Policy | `GOVERNANCE_DB.SECURITY.MEDICORE_PASSWORD_POLICY` | ✅ Created & Applied |
-| Session Policy | `GOVERNANCE_DB.SECURITY.MEDICORE_SESSION_POLICY` | ✅ Created & Applied |
+| Password Policy | `MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_PASSWORD_POLICY` | ✅ Created & Applied |
+| Session Policy | `MEDICORE_GOVERNANCE_DB.SECURITY.MEDICORE_SESSION_POLICY` | ✅ Created & Applied |
 
 ---
 
@@ -144,10 +144,11 @@
 
 ## Notes
 
-- Network rule uses placeholder IP (203.0.113.0/24) - must be updated before production
+- Network rule uses placeholder IP (0.0.0.0/0) - must be updated before production
 - All policies successfully applied at account level
 - Business Critical features (periodic rekeying) confirmed enabled
+- Database naming updated to MEDICORE_GOVERNANCE_DB prefix
 
 ---
 
-*Test execution completed: 2026-02-24*
+*Test execution completed: 2026-02-25*
