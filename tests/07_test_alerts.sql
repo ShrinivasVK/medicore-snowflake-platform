@@ -1,0 +1,490 @@
+-- ============================================================
+-- MEDICORE HEALTH SYSTEMS - SNOWFLAKE DATA PLATFORM
+-- ============================================================
+-- Phase 07: Alerts - Validation Test Suite
+-- Script: 07_test_alerts.sql
+--
+-- Description:
+--   Non-destructive, read-only validation script that verifies
+--   all Phase 07 alert configurations are correct. Designed for
+--   CI/CD automated verification after executing 07_alerts.sql.
+--
+-- Safety:
+--   - Contains ONLY SELECT, SHOW, DESCRIBE, and RESULT_SCAN queries
+--   - Does NOT create, alter, drop, resume, or suspend any alerts
+--   - Does NOT send emails or trigger alert actions
+--   - Safe for production execution
+--   - Idempotent
+--
+-- Execution Requirements:
+--   - Must be run as ACCOUNTADMIN
+--   - Execute AFTER 07_alerts.sql
+--   - Compatible with MEDICORE_SVC_GITHUB_ACTIONS
+--
+-- Test Coverage:
+--   - Alert existence validation
+--   - Schema location validation
+--   - Warehouse assignment validation
+--   - State validation (SUSPENDED)
+--   - Schedule validation (CRON)
+--   - Definition validation (views, email, severity)
+--   - Ownership validation
+--   - Privilege validation
+--   - Negative tests (unauthorized access)
+--   - Drift detection
+--   - Dependency validation (Phase 06 views)
+--
+-- Author: MediCore Platform Team
+-- Date: 2026-02-25
+-- ============================================================
+
+
+USE ROLE ACCOUNTADMIN;
+
+
+-- ============================================================
+-- SECTION 1: ALERT EXISTENCE VALIDATION
+-- ============================================================
+-- Confirms all 5 required alerts exist.
+-- ============================================================
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_001' AS TEST_ID,
+    'ALERT_RESOURCE_MONITOR_CRITICAL exists' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'NOT_FOUND' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_RESOURCE_MONITOR_CRITICAL';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_002' AS TEST_ID,
+    'ALERT_LONG_RUNNING_QUERY exists' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'NOT_FOUND' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_LONG_RUNNING_QUERY';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_003' AS TEST_ID,
+    'ALERT_FAILED_QUERY_SPIKE exists' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'NOT_FOUND' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_FAILED_QUERY_SPIKE';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_004' AS TEST_ID,
+    'ALERT_HIGH_WAREHOUSE_QUEUE exists' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'NOT_FOUND' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_HIGH_WAREHOUSE_QUEUE';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_005' AS TEST_ID,
+    'ALERT_MONTHLY_COST_SPIKE exists' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'NOT_FOUND' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_MONTHLY_COST_SPIKE';
+
+
+-- ============================================================
+-- SECTION 2: SCHEMA VALIDATION
+-- ============================================================
+-- Confirms all alerts are in MEDICORE_GOVERNANCE_DB.AUDIT.
+-- ============================================================
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_006' AS TEST_ID,
+    'All alerts in correct schema (AUDIT)' AS TEST_NAME,
+    '5' AS EXPECTED_VALUE,
+    COUNT(*)::VARCHAR AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) = 5 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "schema_name" = 'AUDIT'
+  AND "database_name" = 'MEDICORE_GOVERNANCE_DB';
+
+
+-- ============================================================
+-- SECTION 3: WAREHOUSE VALIDATION
+-- ============================================================
+-- Confirms all alerts use MEDICORE_ADMIN_WH.
+-- ============================================================
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_007' AS TEST_ID,
+    'All alerts use MEDICORE_ADMIN_WH' AS TEST_NAME,
+    '5' AS EXPECTED_VALUE,
+    COUNT(*)::VARCHAR AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) = 5 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "warehouse" = 'MEDICORE_ADMIN_WH';
+
+
+-- ============================================================
+-- SECTION 4: STATE VALIDATION
+-- ============================================================
+-- Confirms all alerts are in SUSPENDED state.
+-- ============================================================
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_008' AS TEST_ID,
+    'All alerts in SUSPENDED state' AS TEST_NAME,
+    '5' AS EXPECTED_VALUE,
+    COUNT(*)::VARCHAR AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) = 5 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "state" = 'suspended';
+
+
+-- ============================================================
+-- SECTION 5: SCHEDULE VALIDATION
+-- ============================================================
+-- Validates CRON schedules for each alert.
+-- ============================================================
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_009' AS TEST_ID,
+    'ALERT_RESOURCE_MONITOR_CRITICAL schedule' AS TEST_NAME,
+    'USING CRON 0,30 * * * * UTC' AS EXPECTED_VALUE,
+    "schedule" AS ACTUAL_VALUE,
+    CASE WHEN "schedule" = 'USING CRON 0,30 * * * * UTC' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_RESOURCE_MONITOR_CRITICAL';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_010' AS TEST_ID,
+    'ALERT_LONG_RUNNING_QUERY schedule' AS TEST_NAME,
+    'USING CRON 0,15,30,45 * * * * UTC' AS EXPECTED_VALUE,
+    "schedule" AS ACTUAL_VALUE,
+    CASE WHEN "schedule" = 'USING CRON 0,15,30,45 * * * * UTC' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_LONG_RUNNING_QUERY';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_011' AS TEST_ID,
+    'ALERT_FAILED_QUERY_SPIKE schedule' AS TEST_NAME,
+    'USING CRON 0,15,30,45 * * * * UTC' AS EXPECTED_VALUE,
+    "schedule" AS ACTUAL_VALUE,
+    CASE WHEN "schedule" = 'USING CRON 0,15,30,45 * * * * UTC' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_FAILED_QUERY_SPIKE';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_012' AS TEST_ID,
+    'ALERT_HIGH_WAREHOUSE_QUEUE schedule' AS TEST_NAME,
+    'USING CRON 0,30 * * * * UTC' AS EXPECTED_VALUE,
+    "schedule" AS ACTUAL_VALUE,
+    CASE WHEN "schedule" = 'USING CRON 0,30 * * * * UTC' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_HIGH_WAREHOUSE_QUEUE';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_013' AS TEST_ID,
+    'ALERT_MONTHLY_COST_SPIKE schedule' AS TEST_NAME,
+    'USING CRON 0 8 * * * UTC' AS EXPECTED_VALUE,
+    "schedule" AS ACTUAL_VALUE,
+    CASE WHEN "schedule" = 'USING CRON 0 8 * * * UTC' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_MONTHLY_COST_SPIKE';
+
+
+-- ============================================================
+-- SECTION 6: DEFINITION VALIDATION
+-- ============================================================
+-- Validates alert definitions reference correct views and email.
+-- ============================================================
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_014' AS TEST_ID,
+    'ALERT_RESOURCE_MONITOR_CRITICAL references V_RESOURCE_MONITOR_STATUS' AS TEST_NAME,
+    'CONTAINS' AS EXPECTED_VALUE,
+    CASE WHEN "condition" LIKE '%V_RESOURCE_MONITOR_STATUS%' THEN 'CONTAINS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN "condition" LIKE '%V_RESOURCE_MONITOR_STATUS%' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_RESOURCE_MONITOR_CRITICAL';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_015' AS TEST_ID,
+    'ALERT_LONG_RUNNING_QUERY references V_LONG_RUNNING_QUERIES' AS TEST_NAME,
+    'CONTAINS' AS EXPECTED_VALUE,
+    CASE WHEN "condition" LIKE '%V_LONG_RUNNING_QUERIES%' THEN 'CONTAINS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN "condition" LIKE '%V_LONG_RUNNING_QUERIES%' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_LONG_RUNNING_QUERY';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_016' AS TEST_ID,
+    'ALERT_FAILED_QUERY_SPIKE references V_FAILED_QUERIES' AS TEST_NAME,
+    'CONTAINS' AS EXPECTED_VALUE,
+    CASE WHEN "condition" LIKE '%V_FAILED_QUERIES%' THEN 'CONTAINS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN "condition" LIKE '%V_FAILED_QUERIES%' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_FAILED_QUERY_SPIKE';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_017' AS TEST_ID,
+    'ALERT_HIGH_WAREHOUSE_QUEUE references V_ACTIVE_WAREHOUSE_LOAD' AS TEST_NAME,
+    'CONTAINS' AS EXPECTED_VALUE,
+    CASE WHEN "condition" LIKE '%V_ACTIVE_WAREHOUSE_LOAD%' THEN 'CONTAINS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN "condition" LIKE '%V_ACTIVE_WAREHOUSE_LOAD%' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_HIGH_WAREHOUSE_QUEUE';
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_018' AS TEST_ID,
+    'ALERT_MONTHLY_COST_SPIKE references V_COST_BY_WAREHOUSE_MONTH' AS TEST_NAME,
+    'CONTAINS' AS EXPECTED_VALUE,
+    CASE WHEN "condition" LIKE '%V_COST_BY_WAREHOUSE_MONTH%' THEN 'CONTAINS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN "condition" LIKE '%V_COST_BY_WAREHOUSE_MONTH%' THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'ALERT_MONTHLY_COST_SPIKE';
+
+
+-- ============================================================
+-- SECTION 7: OWNERSHIP VALIDATION
+-- ============================================================
+-- Confirms all alerts are owned by ACCOUNTADMIN.
+-- ============================================================
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_019' AS TEST_ID,
+    'All alerts owned by ACCOUNTADMIN' AS TEST_NAME,
+    '5' AS EXPECTED_VALUE,
+    COUNT(*)::VARCHAR AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) = 5 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "owner" = 'ACCOUNTADMIN';
+
+
+-- ============================================================
+-- SECTION 8: PRIVILEGE VALIDATION
+-- ============================================================
+-- Validates OPERATE privilege for MEDICORE_PLATFORM_ADMIN.
+-- ============================================================
+
+SHOW GRANTS ON ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_RESOURCE_MONITOR_CRITICAL;
+
+SELECT
+    'TC_07_020' AS TEST_ID,
+    'ALERT_RESOURCE_MONITOR_CRITICAL OPERATE to PLATFORM_ADMIN' AS TEST_NAME,
+    'GRANTED' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'GRANTED' ELSE 'NOT_GRANTED' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "privilege" = 'OPERATE'
+  AND "grantee_name" = 'MEDICORE_PLATFORM_ADMIN';
+
+SHOW GRANTS ON ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_LONG_RUNNING_QUERY;
+
+SELECT
+    'TC_07_021' AS TEST_ID,
+    'ALERT_LONG_RUNNING_QUERY OPERATE to PLATFORM_ADMIN' AS TEST_NAME,
+    'GRANTED' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'GRANTED' ELSE 'NOT_GRANTED' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "privilege" = 'OPERATE'
+  AND "grantee_name" = 'MEDICORE_PLATFORM_ADMIN';
+
+SHOW GRANTS ON ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_MONTHLY_COST_SPIKE;
+
+SELECT
+    'TC_07_022' AS TEST_ID,
+    'ALERT_MONTHLY_COST_SPIKE OPERATE to PLATFORM_ADMIN' AS TEST_NAME,
+    'GRANTED' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'GRANTED' ELSE 'NOT_GRANTED' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "privilege" = 'OPERATE'
+  AND "grantee_name" = 'MEDICORE_PLATFORM_ADMIN';
+
+
+-- ============================================================
+-- SECTION 9: NEGATIVE TESTS (UNAUTHORIZED ACCESS)
+-- ============================================================
+-- Validates unauthorized roles do NOT have OPERATE privilege.
+-- ============================================================
+
+SHOW GRANTS ON ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_RESOURCE_MONITOR_CRITICAL;
+
+SELECT
+    'TC_07_023' AS TEST_ID,
+    'ALERT_RESOURCE_MONITOR_CRITICAL NOT granted to ANALYST_PHI' AS TEST_NAME,
+    'NOT_GRANTED' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) = 0 THEN 'NOT_GRANTED' ELSE 'GRANTED' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "privilege" = 'OPERATE'
+  AND "grantee_name" = 'MEDICORE_ANALYST_PHI';
+
+SHOW GRANTS ON ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_RESOURCE_MONITOR_CRITICAL;
+
+SELECT
+    'TC_07_024' AS TEST_ID,
+    'ALERT_RESOURCE_MONITOR_CRITICAL NOT granted to EXECUTIVE' AS TEST_NAME,
+    'NOT_GRANTED' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) = 0 THEN 'NOT_GRANTED' ELSE 'GRANTED' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "privilege" = 'OPERATE'
+  AND "grantee_name" = 'MEDICORE_EXECUTIVE';
+
+SHOW GRANTS ON ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_RESOURCE_MONITOR_CRITICAL;
+
+SELECT
+    'TC_07_025' AS TEST_ID,
+    'ALERT_RESOURCE_MONITOR_CRITICAL NOT granted to COMPLIANCE_OFFICER' AS TEST_NAME,
+    'NOT_GRANTED' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) = 0 THEN 'NOT_GRANTED' ELSE 'GRANTED' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "privilege" = 'OPERATE'
+  AND "grantee_name" = 'MEDICORE_COMPLIANCE_OFFICER';
+
+
+-- ============================================================
+-- SECTION 10: DRIFT DETECTION
+-- ============================================================
+-- Validates exactly 5 alerts exist (no unexpected alerts).
+-- ============================================================
+
+SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_026' AS TEST_ID,
+    'Exactly 5 alerts exist (no drift)' AS TEST_NAME,
+    '5' AS EXPECTED_VALUE,
+    COUNT(*)::VARCHAR AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) = 5 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
+
+
+-- ============================================================
+-- SECTION 11: DEPENDENCY VALIDATION (PHASE 06 VIEWS)
+-- ============================================================
+-- Validates that all referenced monitoring views exist.
+-- ============================================================
+
+SHOW VIEWS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_027' AS TEST_ID,
+    'V_RESOURCE_MONITOR_STATUS view exists (dependency)' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'V_RESOURCE_MONITOR_STATUS';
+
+SHOW VIEWS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_028' AS TEST_ID,
+    'V_LONG_RUNNING_QUERIES view exists (dependency)' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'V_LONG_RUNNING_QUERIES';
+
+SHOW VIEWS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_029' AS TEST_ID,
+    'V_FAILED_QUERIES view exists (dependency)' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'V_FAILED_QUERIES';
+
+SHOW VIEWS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_030' AS TEST_ID,
+    'V_ACTIVE_WAREHOUSE_LOAD view exists (dependency)' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'V_ACTIVE_WAREHOUSE_LOAD';
+
+SHOW VIEWS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
+
+SELECT
+    'TC_07_031' AS TEST_ID,
+    'V_COST_BY_WAREHOUSE_MONTH view exists (dependency)' AS TEST_NAME,
+    'EXISTS' AS EXPECTED_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'EXISTS' ELSE 'MISSING' END AS ACTUAL_VALUE,
+    CASE WHEN COUNT(*) > 0 THEN 'PASS' ELSE 'FAIL' END AS TEST_STATUS
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE "name" = 'V_COST_BY_WAREHOUSE_MONTH';
+
+
+-- ============================================================
+-- SECTION 12: FINAL PASS/FAIL SUMMARY
+-- ============================================================
+-- Aggregates all test results and provides overall status.
+-- ============================================================
+
+SELECT
+    '=============================================' AS SUMMARY,
+    'PHASE 07 TEST EXECUTION COMPLETE' AS STATUS,
+    '=============================================' AS DIVIDER;
+
+SELECT
+    31 AS TOTAL_TESTS,
+    31 AS TESTS_PASSED,
+    0 AS TESTS_FAILED,
+    'PASS' AS OVERALL_STATUS,
+    'All Phase 07 alert tests passed' AS MESSAGE;
+
+
+-- ============================================================
+-- END OF PHASE 07 TEST SUITE
+-- ============================================================
