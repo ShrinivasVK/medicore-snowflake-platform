@@ -217,6 +217,27 @@
 
 ---
 
+## Viewing Governance Objects
+
+> **Note:** Tags, Masking Policies, and Row Access Policies are **governance objects**, not tables or views. They do not appear in the Data Explorer.
+
+**To view these objects:**
+1. **Snowsight UI:** Navigate to **Data** → **Governance** (left sidebar)
+2. **SQL Commands:**
+   ```sql
+   SHOW TAGS IN SCHEMA MEDICORE_GOVERNANCE_DB.TAGS;
+   SHOW MASKING POLICIES IN SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES;
+   SHOW ROW ACCESS POLICIES IN SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES;
+   ```
+3. **Account Usage Views:**
+   ```sql
+   SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.TAGS WHERE TAG_DATABASE = 'MEDICORE_GOVERNANCE_DB';
+   SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.MASKING_POLICIES WHERE POLICY_CATALOG = 'MEDICORE_GOVERNANCE_DB';
+   SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.ROW_ACCESS_POLICIES WHERE POLICY_CATALOG = 'MEDICORE_GOVERNANCE_DB';
+   ```
+
+---
+
 ## Phase 08 Complete ✅
 
 All 67 tests passed successfully. The data governance layer is fully implemented with:
