@@ -3,30 +3,68 @@
 -- ============================================================
 -- Phase 04: Database Structure
 -- Script: 04_database_structure.sql
+-- Version: 2.0.0
+--
+-- Change Reason: Complete rewrite to implement schema-level
+--               environment isolation (DEV/QA/PROD) for
+--               CI/CD pipeline compatibility. All database
+--               names updated to MEDICORE_ prefix. Flat
+--               schema design replaced with environment-
+--               prefixed schemas (PROD_CLINICAL, QA_CLINICAL,
+--               DEV_CLINICAL, etc). OWNERSHIP grants removed
+--               in favour of ACCOUNTADMIN ownership with
+--               targeted CREATE grants for CI/CD role.
+--               GOVERNANCE_DB Phase 04 schemas added
+--               (POLICIES, TAGS, DATA_QUALITY, AUDIT).
+--               MEDICORE_SVC_GITHUB_ACTIONS CREATE grants
+--               added across all schemas. Role count
+--               reference updated from 17 to 18.
 --
 -- Description:
 --   Creates the 4-tier medallion database architecture for
---   MediCore Health Systems. Implements RAW_DB (Bronze),
---   TRANSFORM_DB (Silver), ANALYTICS_DB (Gold), and AI_READY_DB
---   (Platinum) with appropriate schemas, retention policies,
---   and granular role-based access controls.
+--   MediCore Health Systems with schema-level environment
+--   isolation. Implements MEDICORE_RAW_DB (Bronze),
+--   MEDICORE_TRANSFORM_DB (Silver), MEDICORE_ANALYTICS_DB
+--   (Gold), and MEDICORE_AI_READY_DB (Platinum) with
+--   DEV/QA/PROD schemas per domain. Also completes
+--   MEDICORE_GOVERNANCE_DB by adding Phase 04 schemas.
+--
+-- Environment Isolation Strategy:
+--   Each data domain has three schemas, one per environment:
+--     PROD_<DOMAIN> : Production data — live, governed, masking enforced
+--     QA_<DOMAIN>   : Quality assurance — synthetic/anonymized test data
+--     DEV_<DOMAIN>  : Development — sandbox, schema evolution experiments
+--
+--   This allows GitHub Actions (Schemachange) to deploy migrations
+--   to DEV and QA schemas without touching PROD schemas, and
+--   promotes changes through environments using the same codebase.
 --
 -- Execution Requirements:
 --   - Must be run as ACCOUNTADMIN
 --   - Execute statements sequentially from top to bottom
---   - Estimated execution time: 2-3 minutes
+--   - Estimated execution time: 3-5 minutes
 --
 -- Dependencies:
---   - Phase 02 must be completed (all 17 MEDICORE roles exist)
---   - Phase 03 must be completed (all 4 warehouses exist)
---   - Warehouses: MEDICORE_ETL_WH, MEDICORE_ANALYTICS_WH, MEDICORE_ML_WH
+--   - Phase 01 must be completed
+--     (MEDICORE_GOVERNANCE_DB and SECURITY schema exist)
+--   - Phase 02 Sections 1-5 must be completed
+--     (all 18 MEDICORE roles exist)
+--   - Phase 03 must be completed
+--     (all 4 warehouses exist)
+--   - After this script completes, return to Phase 02 and
+--     execute Sections 6-12 (database/schema/future grants)
+--
+-- Execution Order:
+--   Phase 01 → Phase 00 → Phase 02 (Sections 1-5) →
+--   Phase 03 → Phase 04 → Phase 02 (Sections 6-12)
 --
 -- !! WARNING !!
---   This script creates production databases with specific
---   retention policies. Data retention settings affect Time
---   Travel and Fail-safe costs. Review retention values before
---   execution. Incorrect grants can expose PHI to unauthorized
---   roles or block legitimate data pipeline operations.
+--   Schema-level isolation means DEV and QA schemas will hold
+--   synthetic or anonymised data only. Never load real PHI
+--   into DEV or QA schemas. Production schemas (PROD_*)
+--   are the only schemas that should ever contain real PHI.
+--   Incorrect retention settings affect Time Travel and
+--   Fail-safe costs.
 --
 -- Author: [YOUR_NAME]
 -- Date: [YYYY-MM-DD]
@@ -41,661 +79,981 @@ USE ROLE ACCOUNTADMIN;
 
 
 -- ============================================================
--- SECTION 2: DATABASE CREATION
+-- SECTION 2: COMPLETE MEDICORE_GOVERNANCE_DB SETUP
 -- ============================================================
--- Creating 4 databases following the medallion architecture:
---   Bronze (RAW_DB) -> Silver (TRANSFORM_DB) -> Gold (ANALYTICS_DB) -> Platinum (AI_READY_DB)
--- Each database has specific retention policies based on data
--- lifecycle and compliance requirements.
+-- Phase 01 created MEDICORE_GOVERNANCE_DB with only the
+-- SECURITY schema. Phase 04 adds the remaining 4 schemas:
+-- POLICIES, TAGS, DATA_QUALITY, and AUDIT.
+-- These schemas house governance objects built in Phase 08.
 -- ============================================================
 
--- ------------------------------------------------------------
--- RAW_DB (Bronze Layer)
--- Landing zone for source data exactly as received
--- Maximum retention for HIPAA audit trail compliance
--- ------------------------------------------------------------
-CREATE DATABASE IF NOT EXISTS RAW_DB
+USE DATABASE MEDICORE_GOVERNANCE_DB;
+
+CREATE SCHEMA IF NOT EXISTS POLICIES
+    COMMENT = 'Data masking policies and row access policies for PHI protection. Created in Phase 04. Policies defined and applied in Phase 08 (Data Governance). Objects: masking policies for SSN, DOB, MRN, phone; row access policies for department-level clinical filtering. No PHI stored here - only policy definitions.';
+
+CREATE SCHEMA IF NOT EXISTS TAGS
+    COMMENT = 'Snowflake object tags for data classification and governance. Created in Phase 04. Tags defined and applied in Phase 08 (Data Governance). Tag taxonomy: DATA_SENSITIVITY (PHI/PII/CONFIDENTIAL/INTERNAL/PUBLIC), MEDALLION_LAYER (RAW/TRANSFORM/ANALYTICS/AI_READY), DATA_DOMAIN (CLINICAL/BILLING/REFERENCE/AUDIT), ENVIRONMENT (PROD/QA/DEV).';
+
+CREATE SCHEMA IF NOT EXISTS DATA_QUALITY
+    COMMENT = 'Data quality rules, expectation definitions, and quality metric results. Created in Phase 04. Populated in Phase 11 (Medallion Architecture). Objects: quality check definitions, threshold configurations, data quality score tables, anomaly detection results. No source data stored here - only quality metadata.';
+
+CREATE SCHEMA IF NOT EXISTS AUDIT
+    COMMENT = 'Governance audit logs tracking policy changes, tag applications, grant modifications, and access review records. Created in Phase 04. Populated starting Phase 08. Distinct from pipeline audit logs (in each databases PROD/QA/DEV_AUDIT schemas). Objects: policy_change_log, tag_application_log, access_review_records, grant_audit_trail.';
+
+-- VERIFICATION: All 5 GOVERNANCE schemas exist
+SHOW SCHEMAS IN DATABASE MEDICORE_GOVERNANCE_DB;
+
+
+-- ============================================================
+-- SECTION 3: MEDICORE_RAW_DB — BRONZE LAYER
+-- ============================================================
+-- Landing zone for source data exactly as received from
+-- upstream systems (EPIC, CERNER, MEDITECH, CLAIMS_CLEARINGHOUSE).
+-- No transformations applied. Dirty data, duplicates, and
+-- inconsistent formats are intentionally retained.
+--
+-- Retention: 90 days for HIPAA audit trail compliance.
+-- Environment schemas: PROD/QA/DEV per domain.
+-- Domains: CLINICAL, BILLING, REFERENCE, AUDIT
+-- Total schemas: 12 (4 domains × 3 environments)
+-- ============================================================
+
+CREATE DATABASE IF NOT EXISTS MEDICORE_RAW_DB
     DATA_RETENTION_TIME_IN_DAYS = 90
-    COMMENT = 'Bronze Layer: Landing zone for source data exactly as received from EPIC, CERNER, MEDITECH, and CLAIMS_CLEARINGHOUSE. No transformations applied. Full history preserved. Dirty data, inconsistent formats, and duplicates intentionally retained as-is. 90-day Time Travel for HIPAA audit trail compliance. 7-year logical retention via archive patterns. Primary writers: DATA_ENGINEER, SVC_ETL_LOADER. Primary readers: DATA_ENGINEER only.';
+    COMMENT = 'Bronze Layer: Landing zone for source data exactly as received. No transformations applied. PHI present in CLINICAL and BILLING domains. 90-day Time Travel for HIPAA audit trail compliance. Schema-level environment isolation: PROD/QA/DEV per domain. DEV and QA schemas contain synthetic data only. Writers: MEDICORE_DATA_ENGINEER, MEDICORE_SVC_ETL_LOADER. CI/CD: MEDICORE_SVC_GITHUB_ACTIONS.';
 
-ALTER DATABASE RAW_DB SET DEFAULT_DDL_COLLATION = 'en-ci';
+ALTER DATABASE MEDICORE_RAW_DB SET DEFAULT_DDL_COLLATION = 'en-ci';
+
+USE DATABASE MEDICORE_RAW_DB;
 
 -- ------------------------------------------------------------
--- TRANSFORM_DB (Silver Layer)
--- Cleansed, conformed, and deduplicated data
+-- PROD SCHEMAS — Production raw data (real PHI, governed)
 -- ------------------------------------------------------------
-CREATE DATABASE IF NOT EXISTS TRANSFORM_DB
+
+CREATE SCHEMA IF NOT EXISTS PROD_CLINICAL
+    COMMENT = 'PRODUCTION: Raw clinical data from EPIC, CERNER, MEDITECH. Real PHI present. Objects: STG_PATIENTS, STG_ENCOUNTERS, STG_LAB_RESULTS, STG_PROVIDERS. Data loaded as-is — no transformations. HIPAA Treatment exception applies for access. Masking policies applied in Phase 08.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_BILLING
+    COMMENT = 'PRODUCTION: Raw billing and claims data from CLAIMS_CLEARINGHOUSE. Financial identifiers present. Objects: STG_CLAIMS, STG_CLAIM_LINE_ITEMS. Data loaded as-is — no transformations.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_REFERENCE
+    COMMENT = 'PRODUCTION: Raw reference and lookup data. No PHI. Objects: STG_DEPARTMENTS, STG_ICD10_CODES, STG_CPT_CODES, STG_FACILITIES. Code sets and dimension tables loaded as-is from source systems.';
+
+CREATE TRANSIENT SCHEMA IF NOT EXISTS PROD_AUDIT
+    COMMENT = 'PRODUCTION: Pipeline audit logs and ETL metadata. Transient — no Time Travel or Fail-safe (high-volume continuous writes, individual records not recoverable). Objects: pipeline_run_log, row_count_audit, error_log, load_metadata. Writers: DATA_ENGINEER, SVC_ETL_LOADER.';
+
+-- ------------------------------------------------------------
+-- QA SCHEMAS — Quality assurance (synthetic/anonymised data)
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS QA_CLINICAL
+    COMMENT = 'QA: Synthetic clinical data for pipeline testing and validation. No real PHI. Mirrors PROD_CLINICAL structure. Used by Schemachange for migration testing and data pipeline QA validation before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_BILLING
+    COMMENT = 'QA: Synthetic billing data for pipeline testing and validation. No real financial identifiers. Mirrors PROD_BILLING structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_REFERENCE
+    COMMENT = 'QA: Reference data copy for QA environment testing. May use real reference data (no PHI in reference). Mirrors PROD_REFERENCE structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE TRANSIENT SCHEMA IF NOT EXISTS QA_AUDIT
+    COMMENT = 'QA: Pipeline audit logs for QA environment runs. Transient schema. Mirrors PROD_AUDIT structure. Used to validate audit logging behaviour before PROD promotion.';
+
+-- ------------------------------------------------------------
+-- DEV SCHEMAS — Development (sandbox, schema evolution)
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS DEV_CLINICAL
+    COMMENT = 'DEV: Development sandbox for clinical schema evolution and pipeline prototyping. No real PHI — synthetic data only. Engineers and Schemachange deploy new migrations here first before promoting to QA and PROD.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_BILLING
+    COMMENT = 'DEV: Development sandbox for billing schema evolution and pipeline prototyping. No real financial identifiers — synthetic data only. Engineers and Schemachange deploy new migrations here first before promoting to QA and PROD.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_REFERENCE
+    COMMENT = 'DEV: Development sandbox for reference data schema evolution. May use real reference data (no PHI). Engineers and Schemachange deploy new migrations here first before promoting to QA and PROD.';
+
+CREATE TRANSIENT SCHEMA IF NOT EXISTS DEV_AUDIT
+    COMMENT = 'DEV: Pipeline audit logs for DEV environment runs. Transient schema. Engineers use this to validate audit logging during development before promoting to QA and PROD.';
+
+-- VERIFICATION: All 12 MEDICORE_RAW_DB schemas created
+SHOW SCHEMAS IN DATABASE MEDICORE_RAW_DB;
+
+
+-- ============================================================
+-- SECTION 4: MEDICORE_TRANSFORM_DB — SILVER LAYER
+-- ============================================================
+-- Cleansed, conformed, validated, and deduplicated data with
+-- business rules applied. PHI still present in CLINICAL and
+-- BILLING domains. Source of truth for all downstream layers.
+--
+-- Retention: 30 days (operational recovery window).
+-- Environment schemas: PROD/QA/DEV per domain.
+-- Domains: CLINICAL, BILLING, REFERENCE, AUDIT, COMMON
+-- Total schemas: 15 (5 domains × 3 environments)
+-- ============================================================
+
+CREATE DATABASE IF NOT EXISTS MEDICORE_TRANSFORM_DB
     DATA_RETENTION_TIME_IN_DAYS = 30
-    COMMENT = 'Silver Layer: Cleansed, conformed, and deduplicated data with business rules applied. PHI still present. Validated formats, referential integrity enforced, dirty data issues resolved. 30-day Time Travel for operational recovery. 3-year logical retention. Primary writers: DATA_ENGINEER. Primary readers: DATA_ENGINEER, DATA_SCIENTIST, COMPLIANCE_OFFICER.';
+    COMMENT = 'Silver Layer: Cleansed, conformed, and deduplicated data with business rules applied. PHI present in CLINICAL and BILLING domains. 30-day Time Travel for operational recovery. Schema-level environment isolation: PROD/QA/DEV per domain. DEV and QA schemas contain synthetic data only. Writers: MEDICORE_DATA_ENGINEER. CI/CD: MEDICORE_SVC_GITHUB_ACTIONS.';
 
-ALTER DATABASE TRANSFORM_DB SET DEFAULT_DDL_COLLATION = 'en-ci';
+ALTER DATABASE MEDICORE_TRANSFORM_DB SET DEFAULT_DDL_COLLATION = 'en-ci';
+
+USE DATABASE MEDICORE_TRANSFORM_DB;
 
 -- ------------------------------------------------------------
--- ANALYTICS_DB (Gold Layer)
--- Business-ready aggregated and dimensional models
+-- PROD SCHEMAS
 -- ------------------------------------------------------------
-CREATE DATABASE IF NOT EXISTS ANALYTICS_DB
+
+CREATE SCHEMA IF NOT EXISTS PROD_CLINICAL
+    COMMENT = 'PRODUCTION: Cleansed clinical entities with validated formats and enforced referential integrity. Derived from MEDICORE_RAW_DB.PROD_CLINICAL. Real PHI present. Business rules applied. Objects: DIM_PATIENTS, FACT_ENCOUNTERS, FACT_LAB_RESULTS, DIM_PROVIDERS.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_BILLING
+    COMMENT = 'PRODUCTION: Cleansed billing entities with validated formats and enforced referential integrity. Derived from MEDICORE_RAW_DB.PROD_BILLING. Financial identifiers present. Objects: FACT_CLAIMS, DIM_CLAIM_LINE_ITEMS, DIM_PAYERS.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_REFERENCE
+    COMMENT = 'PRODUCTION: Validated reference data with enforced constraints. Derived from MEDICORE_RAW_DB.PROD_REFERENCE. No PHI. Objects: DIM_DEPARTMENTS, DIM_ICD10_CODES, DIM_CPT_CODES, DIM_FACILITIES, DIM_DATE.';
+
+CREATE TRANSIENT SCHEMA IF NOT EXISTS PROD_AUDIT
+    COMMENT = 'PRODUCTION: Transformation pipeline audit logs and lineage metadata. Transient schema. Objects: transformation_run_log, data_quality_results, lineage_metadata, row_count_comparison.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_COMMON
+    COMMENT = 'PRODUCTION: Cross-domain shared objects, utility functions, and date spine. No PHI. Objects: DATE_SPINE, FISCAL_CALENDAR, utility UDFs, shared lookup mappings used across CLINICAL and BILLING domains.';
+
+-- ------------------------------------------------------------
+-- QA SCHEMAS
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS QA_CLINICAL
+    COMMENT = 'QA: Synthetic cleansed clinical data for transformation testing. No real PHI. Mirrors PROD_CLINICAL structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_BILLING
+    COMMENT = 'QA: Synthetic cleansed billing data for transformation testing. No real financial identifiers. Mirrors PROD_BILLING structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_REFERENCE
+    COMMENT = 'QA: Reference data for QA environment. Mirrors PROD_REFERENCE structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE TRANSIENT SCHEMA IF NOT EXISTS QA_AUDIT
+    COMMENT = 'QA: Transformation audit logs for QA environment. Transient schema. Mirrors PROD_AUDIT structure.';
+
+CREATE SCHEMA IF NOT EXISTS QA_COMMON
+    COMMENT = 'QA: Cross-domain shared objects for QA environment testing. Mirrors PROD_COMMON structure. Used by Schemachange for migration testing before PROD promotion.';
+
+-- ------------------------------------------------------------
+-- DEV SCHEMAS
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS DEV_CLINICAL
+    COMMENT = 'DEV: Development sandbox for cleansed clinical schema evolution. Synthetic data only. Engineers and Schemachange deploy new transformation migrations here first.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_BILLING
+    COMMENT = 'DEV: Development sandbox for cleansed billing schema evolution. Synthetic data only. Engineers and Schemachange deploy new transformation migrations here first.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_REFERENCE
+    COMMENT = 'DEV: Development sandbox for reference data schema evolution. Engineers and Schemachange deploy new migrations here first.';
+
+CREATE TRANSIENT SCHEMA IF NOT EXISTS DEV_AUDIT
+    COMMENT = 'DEV: Transformation audit logs for DEV environment. Transient schema. Engineers use this to validate audit logging during development.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_COMMON
+    COMMENT = 'DEV: Development sandbox for cross-domain shared objects. Engineers develop and test new utility functions and date spine variations here first.';
+
+-- VERIFICATION: All 15 MEDICORE_TRANSFORM_DB schemas created
+SHOW SCHEMAS IN DATABASE MEDICORE_TRANSFORM_DB;
+
+
+-- ============================================================
+-- SECTION 5: MEDICORE_ANALYTICS_DB — GOLD LAYER
+-- ============================================================
+-- Business-ready aggregated and dimensional models powering
+-- dashboards, reports, and clinical analytics. Masking and
+-- row access policies enforced (Phase 08). Dynamic Tables
+-- populate this layer from TRANSFORM_DB (Phase 11).
+--
+-- Retention: 30 days (operational recovery window).
+-- Environment schemas: PROD/QA/DEV per domain.
+-- Domains: CLINICAL, BILLING, REFERENCE, EXECUTIVE, DEIDENTIFIED
+-- Total schemas: 15 (5 domains × 3 environments)
+-- ============================================================
+
+CREATE DATABASE IF NOT EXISTS MEDICORE_ANALYTICS_DB
     DATA_RETENTION_TIME_IN_DAYS = 30
-    COMMENT = 'Gold Layer: Business-ready aggregated and dimensional models powering dashboards, reports, and clinical analytics. Masking policies and row access policies enforced (Phase 08). 30-day Time Travel for operational recovery. 3-year logical retention. Primary writers: DATA_ENGINEER via Dynamic Tables. Primary readers: All clinical, billing, analyst, compliance, executive, and application roles.';
+    COMMENT = 'Gold Layer: Business-ready aggregated and dimensional models. Masking policies and row access policies enforced (Phase 08). Dynamic Tables populate schemas from MEDICORE_TRANSFORM_DB (Phase 11). 30-day Time Travel for operational recovery. Schema-level environment isolation: PROD/QA/DEV per domain. PROD schemas contain real data with masking enforced. DEV and QA contain synthetic data.';
 
-ALTER DATABASE ANALYTICS_DB SET DEFAULT_DDL_COLLATION = 'en-ci';
+ALTER DATABASE MEDICORE_ANALYTICS_DB SET DEFAULT_DDL_COLLATION = 'en-ci';
+
+USE DATABASE MEDICORE_ANALYTICS_DB;
 
 -- ------------------------------------------------------------
--- AI_READY_DB (Platinum Layer)
--- Feature store and ML-optimised datasets
+-- PROD SCHEMAS
 -- ------------------------------------------------------------
-CREATE DATABASE IF NOT EXISTS AI_READY_DB
+
+CREATE SCHEMA IF NOT EXISTS PROD_CLINICAL
+    COMMENT = 'PRODUCTION: Dimensional models and Dynamic Tables for patient care analytics. Real PHI present — masking policies enforced in Phase 08. Dynamic Tables sourced from MEDICORE_TRANSFORM_DB.PROD_CLINICAL (Phase 11). Readers: CLINICAL_PHYSICIAN, CLINICAL_NURSE, CLINICAL_READER, ANALYST_PHI, COMPLIANCE_OFFICER, DATA_SCIENTIST, APP_STREAMLIT.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_BILLING
+    COMMENT = 'PRODUCTION: Revenue cycle analytics and billing dimensional models. Financial identifiers present — masking policies enforced in Phase 08. Dynamic Tables sourced from MEDICORE_TRANSFORM_DB.PROD_BILLING (Phase 11). Readers: BILLING_SPECIALIST, BILLING_READER, ANALYST_PHI, COMPLIANCE_OFFICER, DATA_SCIENTIST, APP_STREAMLIT.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_REFERENCE
+    COMMENT = 'PRODUCTION: Governed reference data for all downstream consumers. ICD-10 codes, CPT codes, department master, facility master. No PHI. Available to all roles via REFERENCE_READER inheritance.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_EXECUTIVE
+    COMMENT = 'PRODUCTION: Aggregated KPI views and executive dashboards. NO PHI — aggregated metrics and counts only. Safe for EXECUTIVE role and ANALYST_RESTRICTED. Dynamic Tables sourced from MEDICORE_TRANSFORM_DB.PROD_CLINICAL and PROD_BILLING (Phase 11). Readers: EXECUTIVE, ANALYST_RESTRICTED, ANALYST_PHI, COMPLIANCE_OFFICER, APP_STREAMLIT.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_DEIDENTIFIED
+    COMMENT = 'PRODUCTION: Safe Harbor de-identified datasets. All 18 HIPAA identifiers removed or generalised. Safe for MEDICORE_EXT_AUDITOR and MEDICORE_ANALYST_RESTRICTED. Suitable for external sharing and research. Readers: EXT_AUDITOR, ANALYST_RESTRICTED, ANALYST_PHI, COMPLIANCE_OFFICER, DATA_SCIENTIST.';
+
+-- ------------------------------------------------------------
+-- QA SCHEMAS
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS QA_CLINICAL
+    COMMENT = 'QA: Synthetic clinical analytics objects for pipeline and query testing. No real PHI. Mirrors PROD_CLINICAL structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_BILLING
+    COMMENT = 'QA: Synthetic billing analytics objects for pipeline and query testing. No real financial identifiers. Mirrors PROD_BILLING structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_REFERENCE
+    COMMENT = 'QA: Reference data for QA analytics environment. Mirrors PROD_REFERENCE structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_EXECUTIVE
+    COMMENT = 'QA: Synthetic executive KPI objects for dashboard testing. No PHI. Mirrors PROD_EXECUTIVE structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_DEIDENTIFIED
+    COMMENT = 'QA: Synthetic de-identified datasets for external sharing pipeline testing. Mirrors PROD_DEIDENTIFIED structure. Used by Schemachange for migration testing before PROD promotion.';
+
+-- ------------------------------------------------------------
+-- DEV SCHEMAS
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS DEV_CLINICAL
+    COMMENT = 'DEV: Development sandbox for clinical analytics schema evolution. Synthetic data only. Engineers and Schemachange deploy new analytics migrations here first.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_BILLING
+    COMMENT = 'DEV: Development sandbox for billing analytics schema evolution. Synthetic data only. Engineers and Schemachange deploy new analytics migrations here first.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_REFERENCE
+    COMMENT = 'DEV: Development sandbox for reference analytics schema evolution. Engineers and Schemachange deploy new migrations here first.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_EXECUTIVE
+    COMMENT = 'DEV: Development sandbox for executive KPI and dashboard schema evolution. No PHI. Engineers and Schemachange deploy new migrations here first.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_DEIDENTIFIED
+    COMMENT = 'DEV: Development sandbox for de-identification pipeline testing. Synthetic data only. Engineers and Schemachange deploy new migrations here first.';
+
+-- VERIFICATION: All 15 MEDICORE_ANALYTICS_DB schemas created
+SHOW SCHEMAS IN DATABASE MEDICORE_ANALYTICS_DB;
+
+
+-- ============================================================
+-- SECTION 6: MEDICORE_AI_READY_DB — PLATINUM LAYER
+-- ============================================================
+-- Feature store and ML-optimised datasets for model training
+-- and inference. Embeddings and semantic models for Cortex
+-- Analyst and Cortex Vector Search.
+--
+-- Retention: 14 days (ML iterations are frequent; lower
+-- retention is acceptable and reduces cost).
+-- Environment schemas: PROD/QA/DEV per domain.
+-- Domains: FEATURES, TRAINING, SEMANTIC, EMBEDDINGS
+-- Total schemas: 12 (4 domains × 3 environments)
+-- ============================================================
+
+CREATE DATABASE IF NOT EXISTS MEDICORE_AI_READY_DB
     DATA_RETENTION_TIME_IN_DAYS = 14
-    COMMENT = 'Platinum Layer: Feature store and ML-optimised datasets for model training and inference. Feature-engineered data, normalised for ML, embeddings, and semantic models for Cortex Analyst. 14-day Time Travel (ML iterations are frequent, lower retention acceptable). 2-year logical retention. Primary writers: DATA_SCIENTIST, DATA_ENGINEER. Primary readers: DATA_SCIENTIST, ANALYST_PHI.';
+    COMMENT = 'Platinum Layer: Feature store and ML-optimised datasets for model training and inference. Embeddings for Cortex Vector Search, semantic models for Cortex Analyst. 14-day Time Travel (ML iterations are frequent, lower retention acceptable). Schema-level environment isolation: PROD/QA/DEV per domain. DEV and QA schemas contain synthetic feature data only.';
 
-ALTER DATABASE AI_READY_DB SET DEFAULT_DDL_COLLATION = 'en-ci';
+ALTER DATABASE MEDICORE_AI_READY_DB SET DEFAULT_DDL_COLLATION = 'en-ci';
 
--- VERIFICATION: All 4 databases created
-SHOW DATABASES LIKE '%_DB';
+USE DATABASE MEDICORE_AI_READY_DB;
+
+-- ------------------------------------------------------------
+-- PROD SCHEMAS
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS PROD_FEATURES
+    COMMENT = 'PRODUCTION: Patient and encounter feature store for ML model inputs. Pre-computed features, normalised values, one-hot encodings. PHI may be present in raw features. Writers: DATA_SCIENTIST, DATA_ENGINEER. Readers: DATA_SCIENTIST, ANALYST_PHI, COMPLIANCE_OFFICER.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_TRAINING
+    COMMENT = 'PRODUCTION: Curated ML training datasets with labels and stratified samples. Versioned datasets for model reproducibility. PHI may be present. Writers: DATA_SCIENTIST, DATA_ENGINEER. Readers: DATA_SCIENTIST, ANALYST_PHI, COMPLIANCE_OFFICER.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_SEMANTIC
+    COMMENT = 'PRODUCTION: Semantic models for Cortex Analyst natural language queries. YAML definitions, verified queries, and semantic layer metadata. No direct PHI — references governed views in MEDICORE_ANALYTICS_DB. Writers: DATA_SCIENTIST, DATA_ENGINEER. Readers: DATA_SCIENTIST, COMPLIANCE_OFFICER.';
+
+CREATE SCHEMA IF NOT EXISTS PROD_EMBEDDINGS
+    COMMENT = 'PRODUCTION: Vector embeddings for clinical NLP and similarity search. Clinical note embeddings, diagnosis embeddings, procedure embeddings. Used with Cortex Vector Search. PHI may be encoded in embeddings. Writers: DATA_SCIENTIST, DATA_ENGINEER. Readers: DATA_SCIENTIST, ANALYST_PHI, COMPLIANCE_OFFICER.';
+
+-- ------------------------------------------------------------
+-- QA SCHEMAS
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS QA_FEATURES
+    COMMENT = 'QA: Synthetic feature data for ML pipeline testing. No real PHI. Mirrors PROD_FEATURES structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_TRAINING
+    COMMENT = 'QA: Synthetic training datasets for ML pipeline testing. No real PHI. Mirrors PROD_TRAINING structure. Used by Schemachange for migration testing before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_SEMANTIC
+    COMMENT = 'QA: Semantic model definitions for QA testing. Mirrors PROD_SEMANTIC structure. Used to validate Cortex Analyst semantic layer before PROD promotion.';
+
+CREATE SCHEMA IF NOT EXISTS QA_EMBEDDINGS
+    COMMENT = 'QA: Synthetic embeddings for vector search pipeline testing. No real PHI encoded. Mirrors PROD_EMBEDDINGS structure. Used by Schemachange for migration testing before PROD promotion.';
+
+-- ------------------------------------------------------------
+-- DEV SCHEMAS
+-- ------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS DEV_FEATURES
+    COMMENT = 'DEV: Development sandbox for feature engineering schema evolution. Synthetic feature data only. Engineers and data scientists experiment with new feature definitions here first.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_TRAINING
+    COMMENT = 'DEV: Development sandbox for training dataset schema evolution. Synthetic data only. Data scientists prototype new training dataset structures here first.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_SEMANTIC
+    COMMENT = 'DEV: Development sandbox for semantic model prototyping. Data scientists and engineers develop new Cortex Analyst semantic definitions here before promoting to QA and PROD.';
+
+CREATE SCHEMA IF NOT EXISTS DEV_EMBEDDINGS
+    COMMENT = 'DEV: Development sandbox for embedding pipeline schema evolution. Synthetic embeddings only. Data scientists prototype new embedding strategies here first.';
+
+-- VERIFICATION: All 12 MEDICORE_AI_READY_DB schemas created
+SHOW SCHEMAS IN DATABASE MEDICORE_AI_READY_DB;
 
 
 -- ============================================================
--- SECTION 3: SCHEMA CREATION
+-- SECTION 7: ROLE-SPECIFIC DATABASE AND SCHEMA GRANTS
 -- ============================================================
--- Creating schemas within each database to organize data by
--- domain. Each schema has a descriptive comment explaining
--- its purpose and the types of objects it will contain.
--- ============================================================
-
--- ------------------------------------------------------------
--- RAW_DB SCHEMAS
--- Source-aligned schemas matching upstream system domains
--- ------------------------------------------------------------
-
-USE DATABASE RAW_DB;
-
-CREATE SCHEMA IF NOT EXISTS CLINICAL
-    COMMENT = 'Raw clinical data from source systems (EPIC, CERNER, MEDITECH). Contains: PATIENTS, ENCOUNTERS, LAB_RESULTS, PROVIDERS. Data loaded exactly as received - no transformations. PHI present. Writers: DATA_ENGINEER, SVC_ETL_LOADER. Readers: DATA_ENGINEER only.';
-
-CREATE SCHEMA IF NOT EXISTS BILLING
-    COMMENT = 'Raw billing and claims data from CLAIMS_CLEARINGHOUSE. Contains: CLAIMS, CLAIM_LINE_ITEMS. Data loaded exactly as received - no transformations. Financial identifiers present. Writers: DATA_ENGINEER, SVC_ETL_LOADER. Readers: DATA_ENGINEER only.';
-
-CREATE SCHEMA IF NOT EXISTS REFERENCE
-    COMMENT = 'Raw reference and dimension data from various sources. Contains: DIM_DEPARTMENTS, DIM_ICD10_CODES. Lookup tables and code sets. No PHI. Writers: DATA_ENGINEER, SVC_ETL_LOADER. Readers: DATA_ENGINEER only.';
-
-CREATE TRANSIENT SCHEMA IF NOT EXISTS AUDIT
-    COMMENT = 'Pipeline audit logs and load metadata. Transient schema - no Time Travel or Fail-safe (continuous writes, no recovery needed for individual log records). Contains: load history, row counts, error logs, pipeline run metadata. Writers: DATA_ENGINEER, SVC_ETL_LOADER. Readers: DATA_ENGINEER, COMPLIANCE_OFFICER.';
-
--- VERIFICATION: RAW_DB schemas created
-SHOW SCHEMAS IN DATABASE RAW_DB;
-
--- ------------------------------------------------------------
--- TRANSFORM_DB SCHEMAS
--- Cleansed data organized by domain with cross-domain utilities
--- ------------------------------------------------------------
-
-USE DATABASE TRANSFORM_DB;
-
-CREATE SCHEMA IF NOT EXISTS CLINICAL
-    COMMENT = 'Cleansed clinical entities with validated formats and referential integrity. Derived from RAW_DB.CLINICAL. PHI present. Business rules applied. Writers: DATA_ENGINEER. Readers: DATA_ENGINEER, DATA_SCIENTIST, COMPLIANCE_OFFICER.';
-
-CREATE SCHEMA IF NOT EXISTS BILLING
-    COMMENT = 'Cleansed billing entities with validated formats and referential integrity. Derived from RAW_DB.BILLING. Financial identifiers present. Writers: DATA_ENGINEER. Readers: DATA_ENGINEER, DATA_SCIENTIST, COMPLIANCE_OFFICER.';
-
-CREATE SCHEMA IF NOT EXISTS REFERENCE
-    COMMENT = 'Validated reference data with enforced constraints. Derived from RAW_DB.REFERENCE. No PHI. Writers: DATA_ENGINEER. Readers: DATA_ENGINEER, DATA_SCIENTIST, COMPLIANCE_OFFICER.';
-
-CREATE SCHEMA IF NOT EXISTS COMMON
-    COMMENT = 'Cross-domain shared objects and utilities. Contains: date spine, common transformations, utility functions, shared lookup mappings. No PHI. Writers: DATA_ENGINEER. Readers: DATA_ENGINEER, DATA_SCIENTIST.';
-
--- VERIFICATION: TRANSFORM_DB schemas created
-SHOW SCHEMAS IN DATABASE TRANSFORM_DB;
-
--- ------------------------------------------------------------
--- ANALYTICS_DB SCHEMAS
--- Business-ready data with role-based access segmentation
--- ------------------------------------------------------------
-
-USE DATABASE ANALYTICS_DB;
-
-CREATE SCHEMA IF NOT EXISTS CLINICAL
-    COMMENT = 'Dimensional models and aggregated clinical views for patient care analytics. PHI present - masking policies enforced (Phase 08). Dynamic Tables from TRANSFORM_DB (Phase 11). Writers: DATA_ENGINEER. Readers: CLINICAL_PHYSICIAN, CLINICAL_NURSE, CLINICAL_READER, ANALYST_PHI, COMPLIANCE_OFFICER, DATA_SCIENTIST, APP_STREAMLIT.';
-
-CREATE SCHEMA IF NOT EXISTS BILLING
-    COMMENT = 'Revenue cycle analytics and billing dimensional models. Financial identifiers present - masking policies enforced (Phase 08). Dynamic Tables from TRANSFORM_DB (Phase 11). Writers: DATA_ENGINEER. Readers: BILLING_SPECIALIST, BILLING_READER, ANALYST_PHI, COMPLIANCE_OFFICER, DATA_SCIENTIST, APP_STREAMLIT.';
-
-CREATE SCHEMA IF NOT EXISTS REFERENCE
-    COMMENT = 'Governed reference data for all downstream consumers. ICD-10 codes, CPT codes, department master. No PHI. Writers: DATA_ENGINEER. Readers: REFERENCE_READER (and all roles inheriting from it).';
-
-CREATE SCHEMA IF NOT EXISTS EXECUTIVE
-    COMMENT = 'Aggregated KPI views for executive dashboards. NO PHI - only aggregated metrics and counts. Safe for EXECUTIVE role and ANALYST_RESTRICTED. Writers: DATA_ENGINEER. Readers: EXECUTIVE, ANALYST_RESTRICTED, ANALYST_PHI, COMPLIANCE_OFFICER, APP_STREAMLIT.';
-
-CREATE SCHEMA IF NOT EXISTS DEIDENTIFIED
-    COMMENT = 'Safe Harbor de-identified datasets for external sharing and research. All 18 HIPAA identifiers removed or generalised. Safe for EXT_AUDITOR and ANALYST_RESTRICTED. Writers: DATA_ENGINEER. Readers: EXT_AUDITOR, ANALYST_RESTRICTED, ANALYST_PHI, COMPLIANCE_OFFICER, DATA_SCIENTIST.';
-
--- VERIFICATION: ANALYTICS_DB schemas created
-SHOW SCHEMAS IN DATABASE ANALYTICS_DB;
-
--- ------------------------------------------------------------
--- AI_READY_DB SCHEMAS
--- ML-optimised data structures for model development
--- ------------------------------------------------------------
-
-USE DATABASE AI_READY_DB;
-
-CREATE SCHEMA IF NOT EXISTS FEATURES
-    COMMENT = 'Patient and encounter feature store for ML model inputs. Pre-computed features, normalised values, one-hot encodings. PHI may be present in raw features. Writers: DATA_SCIENTIST, DATA_ENGINEER. Readers: DATA_SCIENTIST, ANALYST_PHI.';
-
-CREATE SCHEMA IF NOT EXISTS TRAINING
-    COMMENT = 'Curated ML training datasets with labels and stratified samples. Versioned datasets for model reproducibility. PHI may be present. Writers: DATA_SCIENTIST, DATA_ENGINEER. Readers: DATA_SCIENTIST, ANALYST_PHI.';
-
-CREATE SCHEMA IF NOT EXISTS SEMANTIC
-    COMMENT = 'Semantic models for Cortex Analyst natural language queries. Contains YAML definitions, verified queries, and semantic layer metadata. No direct PHI - references governed views. Writers: DATA_SCIENTIST, DATA_ENGINEER. Readers: DATA_SCIENTIST.';
-
-CREATE SCHEMA IF NOT EXISTS EMBEDDINGS
-    COMMENT = 'Vector embeddings for clinical NLP and similarity search. Contains: clinical note embeddings, diagnosis embeddings, procedure embeddings. Used with Cortex Vector Search. PHI may be encoded in embeddings. Writers: DATA_SCIENTIST, DATA_ENGINEER. Readers: DATA_SCIENTIST, ANALYST_PHI.';
-
--- VERIFICATION: AI_READY_DB schemas created
-SHOW SCHEMAS IN DATABASE AI_READY_DB;
-
-
--- ============================================================
--- SECTION 4: DATABASE AND SCHEMA GRANTS
--- ============================================================
--- Implementing granular access control following the principle
--- of least privilege. Grants are organized by database, then
--- by role within each database section.
--- ============================================================
-
--- ------------------------------------------------------------
--- RAW_DB GRANTS
--- Most restrictive - only engineering and compliance access
--- ------------------------------------------------------------
-
-USE ROLE ACCOUNTADMIN;
-
--- MEDICORE_DATA_ENGINEER: Full ownership of RAW_DB schemas
--- Rationale: Data engineers build and maintain all raw data pipelines
-GRANT USAGE ON DATABASE RAW_DB TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT OWNERSHIP ON SCHEMA RAW_DB.CLINICAL TO ROLE MEDICORE_DATA_ENGINEER COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA RAW_DB.BILLING TO ROLE MEDICORE_DATA_ENGINEER COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA RAW_DB.REFERENCE TO ROLE MEDICORE_DATA_ENGINEER COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA RAW_DB.AUDIT TO ROLE MEDICORE_DATA_ENGINEER COPY CURRENT GRANTS;
-
--- MEDICORE_SVC_ETL_LOADER: Limited write access for automated pipelines
--- Rationale: Service account needs to INSERT data but not DROP or ALTER schemas
-GRANT USAGE ON DATABASE RAW_DB TO ROLE MEDICORE_SVC_ETL_LOADER;
-GRANT USAGE ON SCHEMA RAW_DB.CLINICAL TO ROLE MEDICORE_SVC_ETL_LOADER;
-GRANT USAGE ON SCHEMA RAW_DB.BILLING TO ROLE MEDICORE_SVC_ETL_LOADER;
-GRANT USAGE ON SCHEMA RAW_DB.REFERENCE TO ROLE MEDICORE_SVC_ETL_LOADER;
-GRANT USAGE ON SCHEMA RAW_DB.AUDIT TO ROLE MEDICORE_SVC_ETL_LOADER;
-
--- MEDICORE_PLATFORM_ADMIN: Database-level usage for monitoring
--- Rationale: Platform admins need to see database metadata but not query data
-GRANT USAGE ON DATABASE RAW_DB TO ROLE MEDICORE_PLATFORM_ADMIN;
-
--- MEDICORE_COMPLIANCE_OFFICER: Read access for audit and compliance
--- Rationale: Compliance needs to verify data lineage and audit raw source data
-GRANT USAGE ON DATABASE RAW_DB TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA RAW_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA RAW_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA RAW_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA RAW_DB.AUDIT TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-
--- ------------------------------------------------------------
--- TRANSFORM_DB GRANTS
--- Engineering, data science, and compliance access
--- ------------------------------------------------------------
-
--- MEDICORE_DATA_ENGINEER: Full ownership of TRANSFORM_DB schemas
--- Rationale: Data engineers build and maintain all transformation pipelines
-GRANT USAGE ON DATABASE TRANSFORM_DB TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT OWNERSHIP ON SCHEMA TRANSFORM_DB.CLINICAL TO ROLE MEDICORE_DATA_ENGINEER COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA TRANSFORM_DB.BILLING TO ROLE MEDICORE_DATA_ENGINEER COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA TRANSFORM_DB.REFERENCE TO ROLE MEDICORE_DATA_ENGINEER COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA TRANSFORM_DB.COMMON TO ROLE MEDICORE_DATA_ENGINEER COPY CURRENT GRANTS;
-
--- MEDICORE_DATA_SCIENTIST: Read access to all schemas for ML feature development
--- Rationale: Data scientists need cleansed data for feature engineering
-GRANT USAGE ON DATABASE TRANSFORM_DB TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA TRANSFORM_DB.CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA TRANSFORM_DB.BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA TRANSFORM_DB.REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA TRANSFORM_DB.COMMON TO ROLE MEDICORE_DATA_SCIENTIST;
-
--- MEDICORE_COMPLIANCE_OFFICER: Read access for audit and compliance
--- Rationale: Compliance needs to verify transformation logic and data quality
-GRANT USAGE ON DATABASE TRANSFORM_DB TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA TRANSFORM_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA TRANSFORM_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA TRANSFORM_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA TRANSFORM_DB.COMMON TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-
--- MEDICORE_PLATFORM_ADMIN: Database-level usage for monitoring
--- Rationale: Platform admins need to see database metadata but not query data
-GRANT USAGE ON DATABASE TRANSFORM_DB TO ROLE MEDICORE_PLATFORM_ADMIN;
-
--- ------------------------------------------------------------
--- ANALYTICS_DB GRANTS
--- Broadest access - most roles can read from Gold layer
--- Masking policies (Phase 08) will restrict PHI at query time
--- ------------------------------------------------------------
-
--- MEDICORE_DATA_ENGINEER: CREATE privileges for building analytics objects
--- Rationale: Data engineers create Dynamic Tables and views (Phase 11)
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_DATA_ENGINEER;
-
--- MEDICORE_CLINICAL_PHYSICIAN: Full clinical access
--- Rationale: Physicians need patient data for treatment decisions
--- Note: Phase 08 will NOT apply masking - physicians see full PHI
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
-
--- MEDICORE_CLINICAL_NURSE: Clinical access with unit restrictions
--- Rationale: Nurses need patient data for care coordination
--- Note: Phase 08 will apply masking on financial identifiers
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_CLINICAL_NURSE;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_NURSE;
-
--- MEDICORE_CLINICAL_READER: Limited clinical access
--- Rationale: Support staff need basic patient identification
--- Note: Phase 08 will apply heavy masking - only name and MRN visible
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_CLINICAL_READER;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_READER;
-
--- MEDICORE_BILLING_SPECIALIST: Full billing access
--- Rationale: Billing staff need claims and coding data
--- Note: Phase 08 will mask clinical notes
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_BILLING_SPECIALIST;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_BILLING_SPECIALIST;
-
--- MEDICORE_BILLING_READER: Aggregated billing access
--- Rationale: Financial analysts need billing metrics
--- Note: Phase 08 will restrict to aggregated views only
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_BILLING_READER;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_BILLING_READER;
-
--- MEDICORE_ANALYST_PHI: Full analytics access with PHI
--- Rationale: Clinical analysts need patient-level data for outcomes research
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_ANALYST_PHI;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_ANALYST_PHI;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_ANALYST_PHI;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_ANALYST_PHI;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_ANALYST_PHI;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_ANALYST_PHI;
-
--- MEDICORE_ANALYST_RESTRICTED: De-identified and executive schemas only
--- Rationale: Business analysts should not see PHI
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_ANALYST_RESTRICTED;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_ANALYST_RESTRICTED;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_ANALYST_RESTRICTED;
-
--- MEDICORE_COMPLIANCE_OFFICER: Full read access for compliance monitoring
--- Rationale: Compliance needs to verify policy enforcement and audit data access
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-
--- MEDICORE_EXECUTIVE: Executive schema only (aggregated KPIs, no PHI)
--- Rationale: Executives need high-level metrics, not patient data
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_EXECUTIVE;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_EXECUTIVE;
-
--- MEDICORE_EXT_AUDITOR: De-identified schema only
--- Rationale: External auditors get pre-staged, de-identified extracts only
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_EXT_AUDITOR;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_EXT_AUDITOR;
-
--- MEDICORE_APP_STREAMLIT: Application schemas for dashboards
--- Rationale: Streamlit apps need data for visualisations
--- Note: Row access policies (Phase 08) will filter based on invoking user
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_APP_STREAMLIT;
-
--- MEDICORE_REFERENCE_READER: Reference schema only
--- Rationale: Base role for lookup data (codes, departments)
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_REFERENCE_READER;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_REFERENCE_READER;
-
--- MEDICORE_DATA_SCIENTIST: Full analytics access for ML development
--- Rationale: Data scientists need access to all analytics data for feature validation
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT USAGE ON SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_DATA_SCIENTIST;
-
--- MEDICORE_PLATFORM_ADMIN: Database-level usage for monitoring
-GRANT USAGE ON DATABASE ANALYTICS_DB TO ROLE MEDICORE_PLATFORM_ADMIN;
-
--- ------------------------------------------------------------
--- AI_READY_DB GRANTS
--- Restricted to ML and advanced analytics roles
--- ------------------------------------------------------------
-
--- MEDICORE_DATA_SCIENTIST: Full ownership of AI_READY_DB schemas
--- Rationale: Data scientists own the ML feature store and training data
-GRANT USAGE ON DATABASE AI_READY_DB TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT OWNERSHIP ON SCHEMA AI_READY_DB.FEATURES TO ROLE MEDICORE_DATA_SCIENTIST COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA AI_READY_DB.TRAINING TO ROLE MEDICORE_DATA_SCIENTIST COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA AI_READY_DB.SEMANTIC TO ROLE MEDICORE_DATA_SCIENTIST COPY CURRENT GRANTS;
-GRANT OWNERSHIP ON SCHEMA AI_READY_DB.EMBEDDINGS TO ROLE MEDICORE_DATA_SCIENTIST COPY CURRENT GRANTS;
-
--- MEDICORE_DATA_ENGINEER: CREATE privileges for populating ML schemas
--- Rationale: Data engineers create base feature tables that data scientists enhance
-GRANT USAGE ON DATABASE AI_READY_DB TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW ON SCHEMA AI_READY_DB.FEATURES TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW ON SCHEMA AI_READY_DB.TRAINING TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW ON SCHEMA AI_READY_DB.SEMANTIC TO ROLE MEDICORE_DATA_ENGINEER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW ON SCHEMA AI_READY_DB.EMBEDDINGS TO ROLE MEDICORE_DATA_ENGINEER;
-
--- MEDICORE_ANALYST_PHI: Read access to feature and training data
--- Rationale: Clinical analysts may need to validate ML features against source data
-GRANT USAGE ON DATABASE AI_READY_DB TO ROLE MEDICORE_ANALYST_PHI;
-GRANT USAGE ON SCHEMA AI_READY_DB.FEATURES TO ROLE MEDICORE_ANALYST_PHI;
-GRANT USAGE ON SCHEMA AI_READY_DB.TRAINING TO ROLE MEDICORE_ANALYST_PHI;
-
--- MEDICORE_PLATFORM_ADMIN: Database-level usage for monitoring
-GRANT USAGE ON DATABASE AI_READY_DB TO ROLE MEDICORE_PLATFORM_ADMIN;
-
-
--- ============================================================
--- SECTION 5: FUTURE GRANTS ON SCHEMAS
--- ============================================================
--- Setting up future grants so that objects created in later
--- phases automatically inherit appropriate privileges without
--- requiring ACCOUNTADMIN intervention.
--- ============================================================
-
--- ------------------------------------------------------------
--- RAW_DB FUTURE GRANTS
--- ------------------------------------------------------------
-
--- SVC_ETL_LOADER needs INSERT/UPDATE on future tables for automated pipelines
-GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA RAW_DB.CLINICAL TO ROLE MEDICORE_SVC_ETL_LOADER;
-GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA RAW_DB.BILLING TO ROLE MEDICORE_SVC_ETL_LOADER;
-GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA RAW_DB.REFERENCE TO ROLE MEDICORE_SVC_ETL_LOADER;
-GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA RAW_DB.AUDIT TO ROLE MEDICORE_SVC_ETL_LOADER;
-
--- COMPLIANCE_OFFICER needs SELECT on future tables/views for audit
-GRANT SELECT ON FUTURE TABLES IN SCHEMA RAW_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA RAW_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA RAW_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA RAW_DB.AUDIT TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA RAW_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA RAW_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA RAW_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA RAW_DB.AUDIT TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-
--- ------------------------------------------------------------
--- TRANSFORM_DB FUTURE GRANTS
--- ------------------------------------------------------------
-
--- DATA_SCIENTIST needs SELECT on future tables/views for feature development
-GRANT SELECT ON FUTURE TABLES IN SCHEMA TRANSFORM_DB.CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA TRANSFORM_DB.BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA TRANSFORM_DB.REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA TRANSFORM_DB.COMMON TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA TRANSFORM_DB.CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA TRANSFORM_DB.BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA TRANSFORM_DB.REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA TRANSFORM_DB.COMMON TO ROLE MEDICORE_DATA_SCIENTIST;
-
--- COMPLIANCE_OFFICER needs SELECT on future tables/views for audit
-GRANT SELECT ON FUTURE TABLES IN SCHEMA TRANSFORM_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA TRANSFORM_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA TRANSFORM_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA TRANSFORM_DB.COMMON TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA TRANSFORM_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA TRANSFORM_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA TRANSFORM_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA TRANSFORM_DB.COMMON TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-
--- ------------------------------------------------------------
--- ANALYTICS_DB FUTURE GRANTS
--- Broadest future grants - many roles need SELECT on analytics
--- ------------------------------------------------------------
-
--- CLINICAL_PHYSICIAN: SELECT on clinical tables/views
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
-
--- CLINICAL_NURSE: SELECT on clinical tables/views (masking policies apply - Phase 08)
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_NURSE;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_NURSE;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_NURSE;
-
--- CLINICAL_READER: SELECT on clinical tables/views (heavy masking - Phase 08)
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_READER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_READER;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_CLINICAL_READER;
-
--- BILLING_SPECIALIST: SELECT on billing tables/views
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_BILLING_SPECIALIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_BILLING_SPECIALIST;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_BILLING_SPECIALIST;
-
--- BILLING_READER: SELECT on billing tables/views (aggregated views - Phase 08)
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_BILLING_READER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_BILLING_READER;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_BILLING_READER;
-
--- ANALYST_PHI: SELECT on all schemas
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_ANALYST_PHI;
-
--- ANALYST_RESTRICTED: SELECT on EXECUTIVE and DEIDENTIFIED only
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_ANALYST_RESTRICTED;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_ANALYST_RESTRICTED;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_ANALYST_RESTRICTED;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_ANALYST_RESTRICTED;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_ANALYST_RESTRICTED;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_ANALYST_RESTRICTED;
-
--- COMPLIANCE_OFFICER: SELECT on all schemas
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_COMPLIANCE_OFFICER;
-
--- EXECUTIVE: SELECT on EXECUTIVE schema only
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_EXECUTIVE;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_EXECUTIVE;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_EXECUTIVE;
-
--- EXT_AUDITOR: SELECT on DEIDENTIFIED schema only
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_EXT_AUDITOR;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_EXT_AUDITOR;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_EXT_AUDITOR;
-
--- APP_STREAMLIT: SELECT on CLINICAL, BILLING, EXECUTIVE schemas
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_APP_STREAMLIT;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_APP_STREAMLIT;
-
--- REFERENCE_READER: SELECT on REFERENCE schema
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_REFERENCE_READER;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_REFERENCE_READER;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_REFERENCE_READER;
-
--- DATA_SCIENTIST: SELECT on all schemas for ML validation
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.EXECUTIVE TO ROLE MEDICORE_DATA_SCIENTIST;
-GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA ANALYTICS_DB.DEIDENTIFIED TO ROLE MEDICORE_DATA_SCIENTIST;
-
--- ------------------------------------------------------------
--- AI_READY_DB FUTURE GRANTS
--- ------------------------------------------------------------
-
--- ANALYST_PHI: SELECT on FEATURES and TRAINING schemas
-GRANT SELECT ON FUTURE TABLES IN SCHEMA AI_READY_DB.FEATURES TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE TABLES IN SCHEMA AI_READY_DB.TRAINING TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA AI_READY_DB.FEATURES TO ROLE MEDICORE_ANALYST_PHI;
-GRANT SELECT ON FUTURE VIEWS IN SCHEMA AI_READY_DB.TRAINING TO ROLE MEDICORE_ANALYST_PHI;
-
-
--- ============================================================
--- SECTION 6: VERIFICATION QUERIES
--- ============================================================
--- Comprehensive verification of all Phase 04 components
--- Using INFORMATION_SCHEMA and direct SHOW commands
+-- Grants are structured around the principle of least privilege.
+-- ACCOUNTADMIN retains ownership of all schemas — this is
+-- intentional for a CI/CD environment where Schemachange runs
+-- as SVC_GITHUB_ACTIONS and needs CREATE but not OWNERSHIP.
+--
+-- IMPORTANT: Phase 02 Sections 6-12 must be re-run after
+-- this section completes. Those sections contain the complete
+-- and authoritative grant matrix for all 18 roles across
+-- all databases and schemas. What follows here provides the
+-- minimum grants needed to unblock Phase 05 execution.
 -- ============================================================
 
 USE ROLE ACCOUNTADMIN;
 
--- Verify all 4 databases exist with correct retention
-SELECT DATABASE_NAME, 
-       RETENTION_TIME,
-       COMMENT
-FROM INFORMATION_SCHEMA.DATABASES
-WHERE DATABASE_NAME IN ('RAW_DB', 'TRANSFORM_DB', 'ANALYTICS_DB', 'AI_READY_DB')
-ORDER BY DATABASE_NAME;
+-- ------------------------------------------------------------
+-- MEDICORE_GOVERNANCE_DB — New schema grants
+-- (SECURITY schema grants were set in Phase 01)
+-- ------------------------------------------------------------
+
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES    TO ROLE MEDICORE_PLATFORM_ADMIN;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES    TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES    TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.TAGS        TO ROLE MEDICORE_PLATFORM_ADMIN;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.TAGS        TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.TAGS        TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.TAGS        TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.DATA_QUALITY TO ROLE MEDICORE_PLATFORM_ADMIN;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.DATA_QUALITY TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.DATA_QUALITY TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.DATA_QUALITY TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT       TO ROLE MEDICORE_PLATFORM_ADMIN;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT       TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT       TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT       TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- CREATE privileges on governance schemas for engineering and CI/CD
+GRANT CREATE TABLE, CREATE VIEW
+    ON SCHEMA MEDICORE_GOVERNANCE_DB.DATA_QUALITY
+    TO ROLE MEDICORE_DATA_ENGINEER;
+
+GRANT CREATE TABLE, CREATE VIEW
+    ON SCHEMA MEDICORE_GOVERNANCE_DB.DATA_QUALITY
+    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+GRANT CREATE TABLE, CREATE VIEW
+    ON SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT
+    TO ROLE MEDICORE_DATA_ENGINEER;
+
+GRANT CREATE TABLE, CREATE VIEW
+    ON SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT
+    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- CREATE MASKING POLICY and CREATE ROW ACCESS POLICY for
+-- COMPLIANCE_OFFICER on POLICIES schema (used in Phase 08)
+GRANT CREATE MASKING POLICY
+    ON SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES
+    TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+
+GRANT CREATE ROW ACCESS POLICY
+    ON SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES
+    TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+
+-- CREATE TAG for COMPLIANCE_OFFICER on TAGS schema (used in Phase 08)
+GRANT CREATE TAG
+    ON SCHEMA MEDICORE_GOVERNANCE_DB.TAGS
+    TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+
+-- ------------------------------------------------------------
+-- MEDICORE_RAW_DB — Engineering and CI/CD grants
+-- (Full role matrix added in Phase 02 Sections 6-12)
+-- ------------------------------------------------------------
+
+-- Database-level access for engineering and CI/CD roles
+GRANT USAGE ON DATABASE MEDICORE_RAW_DB TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON DATABASE MEDICORE_RAW_DB TO ROLE MEDICORE_SVC_ETL_LOADER;
+GRANT USAGE ON DATABASE MEDICORE_RAW_DB TO ROLE MEDICORE_PLATFORM_ADMIN;
+GRANT USAGE ON DATABASE MEDICORE_RAW_DB TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON DATABASE MEDICORE_RAW_DB TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- PROD schema access for DATA_ENGINEER and SVC_ETL_LOADER
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_CLINICAL   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_BILLING    TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_REFERENCE  TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_AUDIT      TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_CLINICAL   TO ROLE MEDICORE_SVC_ETL_LOADER;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_BILLING    TO ROLE MEDICORE_SVC_ETL_LOADER;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_REFERENCE  TO ROLE MEDICORE_SVC_ETL_LOADER;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_AUDIT      TO ROLE MEDICORE_SVC_ETL_LOADER;
+
+-- All schemas access for SVC_GITHUB_ACTIONS (CI/CD deploys to all environments)
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_CLINICAL   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_BILLING    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_REFERENCE  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.PROD_AUDIT      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.QA_CLINICAL     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.QA_BILLING      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.QA_REFERENCE    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.QA_AUDIT        TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.DEV_CLINICAL    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.DEV_BILLING     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.DEV_REFERENCE   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_RAW_DB.DEV_AUDIT       TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- CREATE privileges for DATA_ENGINEER and SVC_GITHUB_ACTIONS
+GRANT CREATE TABLE, CREATE VIEW
+    ON SCHEMA MEDICORE_RAW_DB.PROD_CLINICAL  TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW
+    ON SCHEMA MEDICORE_RAW_DB.PROD_BILLING   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW
+    ON SCHEMA MEDICORE_RAW_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW
+    ON SCHEMA MEDICORE_RAW_DB.PROD_AUDIT     TO ROLE MEDICORE_DATA_ENGINEER;
+
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.PROD_CLINICAL   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.PROD_BILLING    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.PROD_REFERENCE  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.PROD_AUDIT      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.QA_CLINICAL     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.QA_BILLING      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.QA_REFERENCE    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.QA_AUDIT        TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.DEV_CLINICAL    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.DEV_BILLING     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.DEV_REFERENCE   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_RAW_DB.DEV_AUDIT       TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- Future grants for SVC_ETL_LOADER (INSERT/UPDATE on production tables)
+GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA MEDICORE_RAW_DB.PROD_CLINICAL  TO ROLE MEDICORE_SVC_ETL_LOADER;
+GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA MEDICORE_RAW_DB.PROD_BILLING   TO ROLE MEDICORE_SVC_ETL_LOADER;
+GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA MEDICORE_RAW_DB.PROD_REFERENCE TO ROLE MEDICORE_SVC_ETL_LOADER;
+GRANT INSERT, UPDATE ON FUTURE TABLES IN SCHEMA MEDICORE_RAW_DB.PROD_AUDIT     TO ROLE MEDICORE_SVC_ETL_LOADER;
+
+-- Future grants for COMPLIANCE_OFFICER (SELECT on all production schemas)
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_RAW_DB.PROD_CLINICAL  TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_RAW_DB.PROD_BILLING   TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_RAW_DB.PROD_REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_RAW_DB.PROD_AUDIT     TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+
+-- ------------------------------------------------------------
+-- MEDICORE_TRANSFORM_DB — Engineering and CI/CD grants
+-- ------------------------------------------------------------
+
+GRANT USAGE ON DATABASE MEDICORE_TRANSFORM_DB TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON DATABASE MEDICORE_TRANSFORM_DB TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON DATABASE MEDICORE_TRANSFORM_DB TO ROLE MEDICORE_PLATFORM_ADMIN;
+GRANT USAGE ON DATABASE MEDICORE_TRANSFORM_DB TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON DATABASE MEDICORE_TRANSFORM_DB TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- PROD schema access
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_AUDIT     TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_AUDIT     TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+
+-- All schemas access for SVC_GITHUB_ACTIONS
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_AUDIT     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_CLINICAL    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_BILLING     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_REFERENCE   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_AUDIT       TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_COMMON      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_CLINICAL   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_BILLING    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_REFERENCE  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_AUDIT      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_COMMON     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- CREATE privileges for DATA_ENGINEER
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE
+    ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE
+    ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE
+    ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE
+    ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_AUDIT     TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE
+    ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_DATA_ENGINEER;
+
+-- CREATE privileges for SVC_GITHUB_ACTIONS across all environments
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_AUDIT     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_CLINICAL    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_BILLING     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_REFERENCE   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_AUDIT       TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.QA_COMMON      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_CLINICAL   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_BILLING    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_REFERENCE  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_AUDIT      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_TRANSFORM_DB.DEV_COMMON     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- Future grants for DATA_SCIENTIST (SELECT on all PROD transform schemas)
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_DATA_SCIENTIST;
+
+-- Future grants for COMPLIANCE_OFFICER
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_AUDIT     TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_CLINICAL  TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_BILLING   TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_TRANSFORM_DB.PROD_COMMON    TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+
+-- ------------------------------------------------------------
+-- MEDICORE_ANALYTICS_DB — Role grants
+-- ------------------------------------------------------------
+
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_CLINICAL_NURSE;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_CLINICAL_READER;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_BILLING_SPECIALIST;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_BILLING_READER;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_EXECUTIVE;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_EXT_AUDITOR;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_APP_STREAMLIT;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_REFERENCE_READER;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_PLATFORM_ADMIN;
+GRANT USAGE ON DATABASE MEDICORE_ANALYTICS_DB TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- PROD schema USAGE grants per role (following least privilege)
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_NURSE;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_READER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_APP_STREAMLIT;
+
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_BILLING_SPECIALIST;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_BILLING_READER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_APP_STREAMLIT;
+
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_REFERENCE_READER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
+
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_EXECUTIVE;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_APP_STREAMLIT;
+
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_EXT_AUDITOR;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_DATA_SCIENTIST;
+
+-- QA and DEV schema USAGE for engineering and CI/CD
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_CLINICAL    TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_BILLING     TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_REFERENCE   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_EXECUTIVE   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_DEIDENTIFIED TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_CLINICAL   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_BILLING    TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_REFERENCE  TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_EXECUTIVE  TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_DEIDENTIFIED TO ROLE MEDICORE_DATA_ENGINEER;
+
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_CLINICAL    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_BILLING     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_REFERENCE   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_EXECUTIVE   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_DEIDENTIFIED TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_CLINICAL   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_BILLING    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_REFERENCE  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_EXECUTIVE  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_DEIDENTIFIED TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- PROD USAGE for SVC_GITHUB_ACTIONS (needed for PROD deployments)
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- CREATE privileges for DATA_ENGINEER and SVC_GITHUB_ACTIONS
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL    TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING     TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_DATA_ENGINEER;
+
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_CLINICAL      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_BILLING       TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_REFERENCE     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_EXECUTIVE     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.QA_DEIDENTIFIED  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_CLINICAL     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_BILLING      TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_REFERENCE    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_EXECUTIVE    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW, CREATE DYNAMIC TABLE ON SCHEMA MEDICORE_ANALYTICS_DB.DEV_DEIDENTIFIED TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- Future grants on PROD schemas (SELECT for analytics consumers)
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_PHYSICIAN;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_NURSE;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_NURSE;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_NURSE;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_READER;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_READER;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_CLINICAL_READER;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_APP_STREAMLIT;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_APP_STREAMLIT;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL TO ROLE MEDICORE_APP_STREAMLIT;
+
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_BILLING_SPECIALIST;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_BILLING_SPECIALIST;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_BILLING_SPECIALIST;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_BILLING_READER;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_BILLING_READER;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_BILLING_READER;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_APP_STREAMLIT;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_APP_STREAMLIT;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_BILLING TO ROLE MEDICORE_APP_STREAMLIT;
+
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_REFERENCE_READER;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_REFERENCE_READER;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_REFERENCE_READER;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_REFERENCE TO ROLE MEDICORE_DATA_SCIENTIST;
+
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_EXECUTIVE;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_EXECUTIVE;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_EXECUTIVE;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_APP_STREAMLIT;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_EXECUTIVE TO ROLE MEDICORE_APP_STREAMLIT;
+
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_EXT_AUDITOR;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_EXT_AUDITOR;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT SELECT ON FUTURE VIEWS          IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT SELECT ON FUTURE DYNAMIC TABLES IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_ANALYST_RESTRICTED;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT SELECT ON FUTURE TABLES         IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_DEIDENTIFIED TO ROLE MEDICORE_DATA_SCIENTIST;
+
+-- ------------------------------------------------------------
+-- MEDICORE_AI_READY_DB — Role grants
+-- ------------------------------------------------------------
+
+GRANT USAGE ON DATABASE MEDICORE_AI_READY_DB TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON DATABASE MEDICORE_AI_READY_DB TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON DATABASE MEDICORE_AI_READY_DB TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON DATABASE MEDICORE_AI_READY_DB TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON DATABASE MEDICORE_AI_READY_DB TO ROLE MEDICORE_PLATFORM_ADMIN;
+GRANT USAGE ON DATABASE MEDICORE_AI_READY_DB TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- PROD schema USAGE
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_SEMANTIC   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_SEMANTIC   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_SEMANTIC   TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_ANALYST_PHI;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_COMPLIANCE_OFFICER;
+
+-- QA and DEV USAGE for SVC_GITHUB_ACTIONS
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.QA_FEATURES     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.QA_TRAINING     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.QA_SEMANTIC     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.QA_EMBEDDINGS   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.DEV_FEATURES    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.DEV_TRAINING    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.DEV_SEMANTIC    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.DEV_EMBEDDINGS  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- PROD USAGE for SVC_GITHUB_ACTIONS
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_SEMANTIC   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT USAGE ON SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- CREATE privileges for DATA_ENGINEER and SVC_GITHUB_ACTIONS
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.PROD_SEMANTIC   TO ROLE MEDICORE_DATA_ENGINEER;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_DATA_ENGINEER;
+
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.PROD_SEMANTIC   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.QA_FEATURES     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.QA_TRAINING     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.QA_SEMANTIC     TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.QA_EMBEDDINGS   TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.DEV_FEATURES    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.DEV_TRAINING    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.DEV_SEMANTIC    TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+GRANT CREATE TABLE, CREATE VIEW ON SCHEMA MEDICORE_AI_READY_DB.DEV_EMBEDDINGS  TO ROLE MEDICORE_SVC_GITHUB_ACTIONS;
+
+-- Future grants for DATA_SCIENTIST (SELECT on PROD schemas)
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_AI_READY_DB.PROD_SEMANTIC   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_AI_READY_DB.PROD_SEMANTIC   TO ROLE MEDICORE_DATA_SCIENTIST;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_AI_READY_DB.PROD_EMBEDDINGS TO ROLE MEDICORE_DATA_SCIENTIST;
+
+-- Future grants for ANALYST_PHI (SELECT on FEATURES and TRAINING)
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES TO ROLE MEDICORE_ANALYST_PHI;
+GRANT SELECT ON FUTURE VIEWS  IN SCHEMA MEDICORE_AI_READY_DB.PROD_TRAINING TO ROLE MEDICORE_ANALYST_PHI;
+
+
+-- ============================================================
+-- SECTION 8: COMPREHENSIVE VERIFICATION
+-- ============================================================
+
+USE ROLE ACCOUNTADMIN;
+
+-- Verify all 5 databases exist with correct retention settings
+SHOW DATABASES LIKE 'MEDICORE%';
+
+-- Verify GOVERNANCE_DB now has all 5 schemas
+SHOW SCHEMAS IN DATABASE MEDICORE_GOVERNANCE_DB;
 
 -- Verify schema counts per database
-SELECT CATALOG_NAME AS DATABASE_NAME,
-       COUNT(*) AS SCHEMA_COUNT
-FROM RAW_DB.INFORMATION_SCHEMA.SCHEMATA
+-- Expected: GOVERNANCE=5, RAW=12, TRANSFORM=15, ANALYTICS=15, AI_READY=12
+SELECT 'MEDICORE_GOVERNANCE_DB' AS DATABASE_NAME, COUNT(*) AS SCHEMA_COUNT
+FROM MEDICORE_GOVERNANCE_DB.INFORMATION_SCHEMA.SCHEMATA
 WHERE SCHEMA_NAME NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
 UNION ALL
-SELECT CATALOG_NAME,
-       COUNT(*)
-FROM TRANSFORM_DB.INFORMATION_SCHEMA.SCHEMATA
+SELECT 'MEDICORE_RAW_DB', COUNT(*)
+FROM MEDICORE_RAW_DB.INFORMATION_SCHEMA.SCHEMATA
 WHERE SCHEMA_NAME NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
 UNION ALL
-SELECT CATALOG_NAME,
-       COUNT(*)
-FROM ANALYTICS_DB.INFORMATION_SCHEMA.SCHEMATA
+SELECT 'MEDICORE_TRANSFORM_DB', COUNT(*)
+FROM MEDICORE_TRANSFORM_DB.INFORMATION_SCHEMA.SCHEMATA
 WHERE SCHEMA_NAME NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
 UNION ALL
-SELECT CATALOG_NAME,
-       COUNT(*)
-FROM AI_READY_DB.INFORMATION_SCHEMA.SCHEMATA
+SELECT 'MEDICORE_ANALYTICS_DB', COUNT(*)
+FROM MEDICORE_ANALYTICS_DB.INFORMATION_SCHEMA.SCHEMATA
+WHERE SCHEMA_NAME NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
+UNION ALL
+SELECT 'MEDICORE_AI_READY_DB', COUNT(*)
+FROM MEDICORE_AI_READY_DB.INFORMATION_SCHEMA.SCHEMATA
 WHERE SCHEMA_NAME NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
 ORDER BY DATABASE_NAME;
 
--- Verify RAW_DB schemas
-SHOW SCHEMAS IN DATABASE RAW_DB;
+-- Verify environment-prefixed schemas in RAW_DB
+SHOW SCHEMAS IN DATABASE MEDICORE_RAW_DB;
 
--- Verify TRANSFORM_DB schemas
-SHOW SCHEMAS IN DATABASE TRANSFORM_DB;
+-- Verify environment-prefixed schemas in TRANSFORM_DB
+SHOW SCHEMAS IN DATABASE MEDICORE_TRANSFORM_DB;
 
--- Verify ANALYTICS_DB schemas
-SHOW SCHEMAS IN DATABASE ANALYTICS_DB;
+-- Verify environment-prefixed schemas in ANALYTICS_DB
+SHOW SCHEMAS IN DATABASE MEDICORE_ANALYTICS_DB;
 
--- Verify AI_READY_DB schemas
-SHOW SCHEMAS IN DATABASE AI_READY_DB;
+-- Verify environment-prefixed schemas in AI_READY_DB
+SHOW SCHEMAS IN DATABASE MEDICORE_AI_READY_DB;
 
--- Verify database grants exist
-SHOW GRANTS ON DATABASE RAW_DB;
-SHOW GRANTS ON DATABASE TRANSFORM_DB;
-SHOW GRANTS ON DATABASE ANALYTICS_DB;
-SHOW GRANTS ON DATABASE AI_READY_DB;
+-- Verify TRANSIENT schemas are correctly created (no Time Travel)
+SELECT SCHEMA_NAME, IS_TRANSIENT
+FROM MEDICORE_RAW_DB.INFORMATION_SCHEMA.SCHEMATA
+WHERE IS_TRANSIENT = 'YES'
+ORDER BY SCHEMA_NAME;
 
--- Verify schema ownership transferred correctly
-SHOW GRANTS ON SCHEMA RAW_DB.CLINICAL;
-SHOW GRANTS ON SCHEMA TRANSFORM_DB.CLINICAL;
-SHOW GRANTS ON SCHEMA ANALYTICS_DB.CLINICAL;
-SHOW GRANTS ON SCHEMA AI_READY_DB.FEATURES;
+SELECT SCHEMA_NAME, IS_TRANSIENT
+FROM MEDICORE_TRANSFORM_DB.INFORMATION_SCHEMA.SCHEMATA
+WHERE IS_TRANSIENT = 'YES'
+ORDER BY SCHEMA_NAME;
 
--- Verify future grants configured
-SHOW FUTURE GRANTS IN SCHEMA RAW_DB.CLINICAL;
-SHOW FUTURE GRANTS IN SCHEMA ANALYTICS_DB.CLINICAL;
-SHOW FUTURE GRANTS IN SCHEMA AI_READY_DB.FEATURES;
+-- Verify key grants (spot check)
+SHOW GRANTS ON DATABASE MEDICORE_RAW_DB;
+SHOW GRANTS ON DATABASE MEDICORE_ANALYTICS_DB;
+SHOW FUTURE GRANTS IN SCHEMA MEDICORE_ANALYTICS_DB.PROD_CLINICAL;
+SHOW FUTURE GRANTS IN SCHEMA MEDICORE_AI_READY_DB.PROD_FEATURES;
 
 
 -- ============================================================
--- SECTION 7: PHASE 04 SUMMARY
+-- SECTION 9: PHASE 04 SUMMARY
 -- ============================================================
 --
--- DATABASES CREATED: 4
---   - RAW_DB        (Bronze)   - 90-day retention, ETL_WH default
---   - TRANSFORM_DB  (Silver)   - 30-day retention, ETL_WH default
---   - ANALYTICS_DB  (Gold)     - 30-day retention, ANALYTICS_WH default
---   - AI_READY_DB   (Platinum) - 14-day retention, ML_WH default
+-- DATABASES CREATED: 4 (plus GOVERNANCE_DB completed)
 --
--- SCHEMAS CREATED: 17
---   RAW_DB (4):       CLINICAL, BILLING, REFERENCE, AUDIT (transient)
---   TRANSFORM_DB (4): CLINICAL, BILLING, REFERENCE, COMMON
---   ANALYTICS_DB (5): CLINICAL, BILLING, REFERENCE, EXECUTIVE, DEIDENTIFIED
---   AI_READY_DB (4):  FEATURES, TRAINING, SEMANTIC, EMBEDDINGS
+--   MEDICORE_GOVERNANCE_DB  : Phase 01 created SECURITY schema.
+--                             Phase 04 adds POLICIES, TAGS,
+--                             DATA_QUALITY, AUDIT schemas.
+--                             Total: 5 schemas.
 --
--- DATABASE GRANTS: 19
---   - RAW_DB:        4 roles (DATA_ENGINEER, SVC_ETL_LOADER, PLATFORM_ADMIN, COMPLIANCE_OFFICER)
---   - TRANSFORM_DB:  4 roles (DATA_ENGINEER, DATA_SCIENTIST, COMPLIANCE_OFFICER, PLATFORM_ADMIN)
---   - ANALYTICS_DB:  13 roles (all data access roles)
---   - AI_READY_DB:   4 roles (DATA_SCIENTIST, DATA_ENGINEER, ANALYST_PHI, PLATFORM_ADMIN)
+--   MEDICORE_RAW_DB         : Bronze. 90-day retention.
+--                             12 schemas (4 domains × 3 envs)
+--                             PROD/QA/DEV × CLINICAL/BILLING/
+--                             REFERENCE/AUDIT
 --
--- SCHEMA GRANTS: 65+ individual grants
---   - Ownership transfers for DATA_ENGINEER and DATA_SCIENTIST
---   - USAGE grants for all applicable roles
---   - CREATE privileges for engineering roles
+--   MEDICORE_TRANSFORM_DB   : Silver. 30-day retention.
+--                             15 schemas (5 domains × 3 envs)
+--                             PROD/QA/DEV × CLINICAL/BILLING/
+--                             REFERENCE/AUDIT/COMMON
 --
--- FUTURE GRANTS: 100+ individual grants
---   - SELECT on future TABLES, VIEWS, DYNAMIC TABLES
---   - INSERT/UPDATE for SVC_ETL_LOADER
+--   MEDICORE_ANALYTICS_DB   : Gold. 30-day retention.
+--                             15 schemas (5 domains × 3 envs)
+--                             PROD/QA/DEV × CLINICAL/BILLING/
+--                             REFERENCE/EXECUTIVE/DEIDENTIFIED
 --
--- PHASE 05 DEPENDENCIES (Resource Monitors):
---   - Databases exist for warehouse assignment monitoring
---   - No resource monitors assigned yet - Phase 05 scope
+--   MEDICORE_AI_READY_DB    : Platinum. 14-day retention.
+--                             12 schemas (4 domains × 3 envs)
+--                             PROD/QA/DEV × FEATURES/TRAINING/
+--                             SEMANTIC/EMBEDDINGS
 --
--- PHASE 08 DEPENDENCIES (Data Governance):
---   - Masking policies to be applied to ANALYTICS_DB schemas
---   - Row access policies for role-based data filtering
---   - Tags to be applied for PHI classification
+-- TOTAL SCHEMAS CREATED: 59
+--   (5 + 12 + 15 + 15 + 12)
 --
--- PHASE 11 DEPENDENCIES (Medallion Architecture):
---   - Dynamic Tables will be created in ANALYTICS_DB schemas
---   - CREATE DYNAMIC TABLE grants already in place
---   - Warehouse references will use MEDICORE_ETL_WH and MEDICORE_ANALYTICS_WH
+-- TRANSIENT SCHEMAS (no Time Travel / Fail-safe):
+--   MEDICORE_RAW_DB:       PROD_AUDIT, QA_AUDIT, DEV_AUDIT
+--   MEDICORE_TRANSFORM_DB: PROD_AUDIT, QA_AUDIT, DEV_AUDIT
+--
+-- SCHEMA OWNERSHIP:
+--   ACCOUNTADMIN retains ownership of all schemas.
+--   This is intentional — Schemachange CI/CD uses CREATE
+--   privileges on MEDICORE_SVC_GITHUB_ACTIONS, not ownership.
+--
+-- DATABASE AND SCHEMA GRANTS: Minimum grants for unblocking
+--   Phase 05. Full grant matrix completed in Phase 02
+--   Sections 6-12 (to be re-run after Phase 04).
+--
+-- NEXT STEPS:
+--   1. Run Phase 05 (Resource Monitors)
+--   2. Return to Phase 02 and execute Sections 6-12 in full
+--      — all database USAGE, schema USAGE, and future grants
+--        for the complete 18-role matrix
+--   3. Proceed to Phase 06 (Monitoring)
+--
+-- PHASE 05 DEPENDENCIES:
+--   - All 4 databases exist for warehouse monitoring
+--
+-- PHASE 08 DEPENDENCIES:
+--   - Masking policies will target PROD_* schemas only
+--   - Row access policies applied to PROD_CLINICAL and
+--     PROD_BILLING in MEDICORE_ANALYTICS_DB
+--   - Tags will classify all 59 schemas
+--
+-- PHASE 11 DEPENDENCIES:
+--   - Dynamic Tables will be built in MEDICORE_ANALYTICS_DB
+--     PROD/QA/DEV schemas sourcing from MEDICORE_TRANSFORM_DB
+--   - CREATE DYNAMIC TABLE grants already in place for
+--     DATA_ENGINEER and SVC_GITHUB_ACTIONS
+--
+-- !! REMINDER !!
+--   DEV and QA schemas must NEVER contain real PHI.
+--   Only PROD_* schemas in any database should hold real
+--   patient data. Enforce this through data loading policies
+--   and Snowflake row access policies (Phase 08).
 --
 -- ============================================================
 -- END OF PHASE 04: DATABASE STRUCTURE
