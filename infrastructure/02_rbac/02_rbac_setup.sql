@@ -279,6 +279,18 @@ GRANT ROLE MEDICORE_SVC_GITHUB_ACTIONS TO USER SVC_GITHUB_ACTIONS_MEDICORE;
 -- VERIFICATION: Service accounts created
 SHOW USERS LIKE 'SVC%';
 
+-- ------------------------------------------------------------
+-- TEMPORARY: Enable GitHub Actions service account with password
+-- !! WARNING !! Migrate to RSA key-pair authentication for production
+-- ------------------------------------------------------------
+
+ALTER USER SVC_GITHUB_ACTIONS_MEDICORE SET 
+    PASSWORD = 'MediCore$GH2024!Svc'
+    DISABLED = FALSE;
+
+-- VERIFICATION: GitHub Actions service account enabled
+DESCRIBE USER SVC_GITHUB_ACTIONS_MEDICORE;
+
 
 -- ============================================================
 -- SECTION 6: MEDICORE_GOVERNANCE_DB GRANTS
