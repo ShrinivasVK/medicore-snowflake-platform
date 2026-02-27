@@ -230,23 +230,23 @@ Source Systems (EPIC, Claims)
          │
          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      SILVER (TRANSFORM_DB)                       │
-│  Cleansed, validated, conformed. Business rules applied.         │
-│  Added: Surrogate keys, data quality flags, standardized codes   │
+│                      SILVER (TRANSFORM_DB)                      │
+│  Cleansed, validated, conformed. Business rules applied.        │
+│  Added: Surrogate keys, data quality flags, standardized codes  │
 └─────────────────────────────────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                       GOLD (ANALYTICS_DB)                        │
-│  Business-ready models. Masking policies enforced.               │
-│  Schemas: CLINICAL, BILLING, REFERENCE, EXECUTIVE, DEIDENTIFIED  │
+│                       GOLD (ANALYTICS_DB)                       │
+│  Business-ready models. Masking policies enforced.              │
+│  Schemas: CLINICAL, BILLING, REFERENCE, EXECUTIVE, DEIDENTIFIED │
 └─────────────────────────────────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     PLATINUM (AI_READY_DB)                       │
-│  ML features, training datasets, embeddings, semantic models     │
-│  Schemas: FEATURES, TRAINING, EMBEDDINGS, SEMANTIC               │
+│                     PLATINUM (AI_READY_DB)                      │
+│  ML features, training datasets, embeddings, semantic models    │
+│  Schemas: FEATURES, TRAINING, EMBEDDINGS, SEMANTIC              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
