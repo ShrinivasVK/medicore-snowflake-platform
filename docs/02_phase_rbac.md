@@ -41,10 +41,10 @@ Phase 02 establishes the complete Role-Based Access Control (RBAC) hierarchy for
                             │    (Tier 5)     │          │    (Tier 5)     │
                             └────────┬────────┘          └─────────────────┘
                                      │
-                            ┌────────┴────────┐
+                            ┌────────┴──────────┐
                             │ANALYST_RESTRICTED│
                             │    (Tier 5)     │
-                            └────────┬────────┘
+                            └────────┬──────────┘
                                      │
               ┌──────────────────────┼──────────────────────┐
               │                      │                      │
@@ -58,12 +58,12 @@ Phase 02 establishes the complete Role-Based Access Control (RBAC) hierarchy for
      │   (Tier 3)      │    │   (Tier 4)      │    │   (Tier 7)      │
      └────────┬────────┘    └────────┬────────┘    └─────────────────┘
               │                      │
-     ┌────────┴────────┐    ┌────────┴────────┐
+     ┌────────┴────────┐    ┌────────┴─────────┐
      │ CLINICAL_NURSE  │    │BILLING_SPECIALIST│
      │   (Tier 3)      │    │   (Tier 4)       │
      └────────┬────────┘    └──────────────────┘
               │
-     ┌────────┴────────┐
+     ┌────────┴─────────┐
      │CLINICAL_PHYSICIAN│
      │   (Tier 3)       │
      └──────────────────┘
