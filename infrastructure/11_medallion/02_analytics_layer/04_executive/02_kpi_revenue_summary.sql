@@ -40,9 +40,16 @@ monthly_aggregation AS (
         CLAIM_MONTH                                         AS MONTH_KEY,
         COUNT(CLAIM_ID)                                     AS TOTAL_CLAIMS,
         SUM(BILLED_AMOUNT)                                  AS TOTAL_BILLED_AMOUNT,
-        SUM(BILLED_AMOUNT)                                  AS TOTAL_PAID_AMOUNT,
-        0                                                   AS TOTAL_ADJUSTMENT_AMOUNT,
-        SUM(BILLED_AMOUNT)                                  AS TOTAL_NET_REVENUE,
+        SUM(CASE WHEN CLAIM_STATUS = 'PAID' THEN BILLED_AMOUNT ELSE 0 END) 
+                                                            AS TOTAL_PAID_AMOUNT,
+        SUM(CASE WHEN CLAIM_STATUS = 'ADJUSTED' THEN BILLED_AMOUNT ELSE 0 END) 
+                                                            AS TOTAL_ADJUSTMENT_AMOUNT,
+        SUM(CASE WHEN CLAIM_STATUS = 'DENIED' THEN BILLED_AMOUNT ELSE 0 END) 
+                                                            AS TOTAL_DENIED_AMOUNT,
+        SUM(CASE WHEN CLAIM_STATUS = 'PAID' THEN BILLED_AMOUNT ELSE 0 END) 
+                                                            AS TOTAL_NET_REVENUE,
+        SUM(CASE WHEN CLAIM_STATUS IN ('PAID','DENIED','ADJUSTED') THEN 1 ELSE 0 END) 
+                                                            AS TOTAL_ADJUDICATED_CLAIMS,
         SUM(DENIAL_FLAG_NUMERIC)                            AS TOTAL_DENIED_CLAIMS,
         COUNT(DISTINCT ENCOUNTER_ID)                        AS DISTINCT_ENCOUNTERS
     FROM base_claims
@@ -55,6 +62,7 @@ SELECT
     TOTAL_BILLED_AMOUNT,
     TOTAL_PAID_AMOUNT,
     TOTAL_ADJUSTMENT_AMOUNT,
+    TOTAL_DENIED_AMOUNT,
     TOTAL_NET_REVENUE,
     CASE 
         WHEN TOTAL_CLAIMS > 0 
@@ -62,16 +70,22 @@ SELECT
         ELSE 0 
     END                                                     AS AVERAGE_REVENUE_PER_CLAIM,
     CASE 
-        WHEN TOTAL_CLAIMS > 0 
-        THEN ROUND(TOTAL_DENIED_CLAIMS::FLOAT / TOTAL_CLAIMS * 100, 2)
+        WHEN TOTAL_ADJUDICATED_CLAIMS > 0 
+        THEN ROUND(TOTAL_DENIED_CLAIMS::FLOAT / TOTAL_ADJUDICATED_CLAIMS * 100, 2)
         ELSE 0 
     END                                                     AS DENIAL_RATE_PERCENT,
+    CASE 
+        WHEN TOTAL_BILLED_AMOUNT > 0 
+        THEN ROUND(TOTAL_PAID_AMOUNT / TOTAL_BILLED_AMOUNT * 100, 2)
+        ELSE 0 
+    END                                                     AS COLLECTION_RATE_PERCENT,
     CASE 
         WHEN DISTINCT_ENCOUNTERS > 0 
         THEN ROUND(TOTAL_NET_REVENUE / DISTINCT_ENCOUNTERS, 2)
         ELSE 0 
     END                                                     AS REVENUE_PER_ENCOUNTER,
     TOTAL_DENIED_CLAIMS,
+    TOTAL_ADJUDICATED_CLAIMS,
     DISTINCT_ENCOUNTERS,
     CURRENT_TIMESTAMP()                                     AS REFRESH_TIMESTAMP
 FROM monthly_aggregation
@@ -103,9 +117,11 @@ AS
             CLAIM_MONTH AS MONTH_KEY,
             COUNT(CLAIM_ID) AS TOTAL_CLAIMS,
             SUM(BILLED_AMOUNT) AS TOTAL_BILLED_AMOUNT,
-            SUM(BILLED_AMOUNT) AS TOTAL_PAID_AMOUNT,
-            0 AS TOTAL_ADJUSTMENT_AMOUNT,
-            SUM(BILLED_AMOUNT) AS TOTAL_NET_REVENUE,
+            SUM(CASE WHEN CLAIM_STATUS = 'PAID' THEN BILLED_AMOUNT ELSE 0 END) AS TOTAL_PAID_AMOUNT,
+            SUM(CASE WHEN CLAIM_STATUS = 'ADJUSTED' THEN BILLED_AMOUNT ELSE 0 END) AS TOTAL_ADJUSTMENT_AMOUNT,
+            SUM(CASE WHEN CLAIM_STATUS = 'DENIED' THEN BILLED_AMOUNT ELSE 0 END) AS TOTAL_DENIED_AMOUNT,
+            SUM(CASE WHEN CLAIM_STATUS = 'PAID' THEN BILLED_AMOUNT ELSE 0 END) AS TOTAL_NET_REVENUE,
+            SUM(CASE WHEN CLAIM_STATUS IN ('PAID','DENIED','ADJUSTED') THEN 1 ELSE 0 END) AS TOTAL_ADJUDICATED_CLAIMS,
             SUM(DENIAL_FLAG_NUMERIC) AS TOTAL_DENIED_CLAIMS,
             COUNT(DISTINCT ENCOUNTER_ID) AS DISTINCT_ENCOUNTERS
         FROM base_claims
@@ -117,6 +133,7 @@ AS
         TOTAL_BILLED_AMOUNT,
         TOTAL_PAID_AMOUNT,
         TOTAL_ADJUSTMENT_AMOUNT,
+        TOTAL_DENIED_AMOUNT,
         TOTAL_NET_REVENUE,
         CASE 
             WHEN TOTAL_CLAIMS > 0 
@@ -124,16 +141,22 @@ AS
             ELSE 0 
         END AS AVERAGE_REVENUE_PER_CLAIM,
         CASE 
-            WHEN TOTAL_CLAIMS > 0 
-            THEN ROUND(TOTAL_DENIED_CLAIMS::FLOAT / TOTAL_CLAIMS * 100, 2)
+            WHEN TOTAL_ADJUDICATED_CLAIMS > 0 
+            THEN ROUND(TOTAL_DENIED_CLAIMS::FLOAT / TOTAL_ADJUDICATED_CLAIMS * 100, 2)
             ELSE 0 
         END AS DENIAL_RATE_PERCENT,
+        CASE 
+            WHEN TOTAL_BILLED_AMOUNT > 0 
+            THEN ROUND(TOTAL_PAID_AMOUNT / TOTAL_BILLED_AMOUNT * 100, 2)
+            ELSE 0 
+        END AS COLLECTION_RATE_PERCENT,
         CASE 
             WHEN DISTINCT_ENCOUNTERS > 0 
             THEN ROUND(TOTAL_NET_REVENUE / DISTINCT_ENCOUNTERS, 2)
             ELSE 0 
         END AS REVENUE_PER_ENCOUNTER,
         TOTAL_DENIED_CLAIMS,
+        TOTAL_ADJUDICATED_CLAIMS,
         DISTINCT_ENCOUNTERS,
         CURRENT_TIMESTAMP() AS REFRESH_TIMESTAMP
     FROM monthly_aggregation

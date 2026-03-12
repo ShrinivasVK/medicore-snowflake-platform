@@ -572,22 +572,17 @@ ORDER BY qh.START_TIME DESC;
 -- Retention: Last 90 days
 -- ------------------------------------------------------------
 CREATE OR REPLACE VIEW MEDICORE_GOVERNANCE_DB.AUDIT.V_SESSION_HISTORY
-    COMMENT = 'Session audit log tracking user sessions including client app, IP, and duration. Data latency: up to 3 hours. Retention: 90 days.'
+    COMMENT = 'Session audit log tracking user sessions including client app and login time. Data latency: up to 3 hours. Retention: 90 days.'
 AS
 SELECT
     SESSION_ID                                              AS SESSION_ID,
     USER_NAME                                               AS USER_NAME,
     CREATED_ON                                              AS LOGIN_TIME,
-    DESTROYED_ON                                            AS LOGOUT_TIME,
-    DATEDIFF(MINUTE, CREATED_ON, COALESCE(DESTROYED_ON, CURRENT_TIMESTAMP()))
-                                                            AS SESSION_DURATION_MINUTES,
     CLIENT_APPLICATION_ID                                   AS CLIENT_APPLICATION,
     CLIENT_APPLICATION_VERSION                              AS CLIENT_VERSION,
     CLIENT_ENVIRONMENT                                      AS CLIENT_ENVIRONMENT,
     AUTHENTICATION_METHOD                                   AS AUTH_METHOD,
     CASE
-        WHEN DATEDIFF(HOUR, CREATED_ON, COALESCE(DESTROYED_ON, CURRENT_TIMESTAMP())) > 8
-        THEN 'EXTENDED_SESSION'
         WHEN AUTHENTICATION_METHOD NOT LIKE '%MFA%' AND AUTHENTICATION_METHOD NOT LIKE '%MULTI%'
         THEN 'NO_MFA'
         ELSE 'NORMAL'

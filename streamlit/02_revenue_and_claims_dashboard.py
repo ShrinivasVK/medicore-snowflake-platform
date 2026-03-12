@@ -26,9 +26,19 @@ def load_revenue_kpis(_session, start_date, end_date, payers, departments, statu
     sql = f"""
     SELECT 
         COALESCE(SUM(cli.LINE_BILLED_AMOUNT), 0) AS TOTAL_BILLED,
-        COALESCE(SUM(cli.LINE_NET_REVENUE), 0) AS TOTAL_PAID,
-        COALESCE(SUM(cli.LINE_NET_REVENUE), 0) AS NET_REVENUE,
-        COALESCE(SUM(cli.DENIAL_FLAG_NUMERIC) * 100.0 / NULLIF(COUNT(*), 0), 0) AS DENIAL_RATE
+        COALESCE(SUM(CASE WHEN c.CLAIM_STATUS = 'PAID' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END), 0) AS TOTAL_PAID,
+        COALESCE(SUM(CASE WHEN c.CLAIM_STATUS = 'PAID' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END), 0) AS NET_REVENUE,
+        COALESCE(SUM(CASE WHEN c.CLAIM_STATUS = 'DENIED' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END), 0) AS TOTAL_DENIED_AMOUNT,
+        COALESCE(
+            SUM(CASE WHEN c.CLAIM_STATUS = 'DENIED' THEN 1 ELSE 0 END) * 100.0 
+            / NULLIF(SUM(CASE WHEN c.CLAIM_STATUS IN ('PAID','DENIED','ADJUSTED') THEN 1 ELSE 0 END), 0), 
+            0
+        ) AS DENIAL_RATE,
+        COALESCE(
+            SUM(CASE WHEN c.CLAIM_STATUS = 'PAID' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END) * 100.0 
+            / NULLIF(SUM(cli.LINE_BILLED_AMOUNT), 0), 
+            0
+        ) AS COLLECTION_RATE
     FROM MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIM_LINE_ITEMS cli
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIMS c ON cli.CLAIM_ID = c.CLAIM_ID
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_REFERENCE.DIM_DEPARTMENTS d ON cli.DEPARTMENT_ID = d.DEPARTMENT_ID
@@ -61,7 +71,8 @@ def load_revenue_trend(_session, start_date, end_date, payers, departments, stat
     SELECT 
         cli.SERVICE_MONTH AS MONTH_KEY,
         COALESCE(SUM(cli.LINE_BILLED_AMOUNT), 0) AS BILLED_AMOUNT,
-        COALESCE(SUM(cli.LINE_NET_REVENUE), 0) AS NET_REVENUE
+        COALESCE(SUM(CASE WHEN c.CLAIM_STATUS = 'PAID' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END), 0) AS NET_REVENUE,
+        COALESCE(SUM(CASE WHEN c.CLAIM_STATUS = 'DENIED' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END), 0) AS DENIED_AMOUNT
     FROM MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIM_LINE_ITEMS cli
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIMS c ON cli.CLAIM_ID = c.CLAIM_ID
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_REFERENCE.DIM_DEPARTMENTS d ON cli.DEPARTMENT_ID = d.DEPARTMENT_ID
@@ -95,7 +106,11 @@ def load_denial_trend(_session, start_date, end_date, payers, departments, statu
     sql = f"""
     SELECT 
         cli.SERVICE_MONTH AS MONTH_KEY,
-        COALESCE(SUM(cli.DENIAL_FLAG_NUMERIC) * 100.0 / NULLIF(COUNT(*), 0), 0) AS DENIAL_RATE
+        COALESCE(
+            SUM(CASE WHEN c.CLAIM_STATUS = 'DENIED' THEN 1 ELSE 0 END) * 100.0 
+            / NULLIF(SUM(CASE WHEN c.CLAIM_STATUS IN ('PAID','DENIED','ADJUSTED') THEN 1 ELSE 0 END), 0), 
+            0
+        ) AS DENIAL_RATE
     FROM MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIM_LINE_ITEMS cli
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIMS c ON cli.CLAIM_ID = c.CLAIM_ID
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_REFERENCE.DIM_DEPARTMENTS d ON cli.DEPARTMENT_ID = d.DEPARTMENT_ID
@@ -124,7 +139,8 @@ def load_denials_by_payer(_session, start_date, end_date, departments, statuses)
     sql = f"""
     SELECT 
         COALESCE(c.PAYER_TYPE, 'Unknown') AS PAYER_TYPE,
-        SUM(cli.DENIAL_FLAG_NUMERIC) AS DENIED_COUNT
+        SUM(CASE WHEN c.CLAIM_STATUS = 'DENIED' THEN 1 ELSE 0 END) AS DENIED_COUNT,
+        SUM(CASE WHEN c.CLAIM_STATUS = 'DENIED' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END) AS DENIED_AMOUNT
     FROM MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIM_LINE_ITEMS cli
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIMS c ON cli.CLAIM_ID = c.CLAIM_ID
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_REFERENCE.DIM_DEPARTMENTS d ON cli.DEPARTMENT_ID = d.DEPARTMENT_ID
@@ -133,7 +149,7 @@ def load_denials_by_payer(_session, start_date, end_date, departments, statuses)
       {dept_filter}
       {status_filter}
     GROUP BY c.PAYER_TYPE
-    ORDER BY DENIED_COUNT DESC
+    ORDER BY DENIED_AMOUNT DESC
     """
     return _session.sql(sql).to_pandas()
 
@@ -152,7 +168,7 @@ def load_payer_mix(_session, start_date, end_date, departments, statuses):
     sql = f"""
     SELECT 
         COALESCE(c.PAYER_TYPE, 'Unknown') AS PAYER_TYPE,
-        COALESCE(SUM(cli.LINE_NET_REVENUE), 0) AS REVENUE
+        COALESCE(SUM(CASE WHEN c.CLAIM_STATUS = 'PAID' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END), 0) AS REVENUE
     FROM MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIM_LINE_ITEMS cli
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIMS c ON cli.CLAIM_ID = c.CLAIM_ID
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_REFERENCE.DIM_DEPARTMENTS d ON cli.DEPARTMENT_ID = d.DEPARTMENT_ID
@@ -185,7 +201,7 @@ def load_top_procedures(_session, start_date, end_date, payers, departments, sta
     sql = f"""
     SELECT 
         cli.PROCEDURE_CODE,
-        COALESCE(SUM(cli.LINE_NET_REVENUE), 0) AS TOTAL_REVENUE
+        COALESCE(SUM(CASE WHEN c.CLAIM_STATUS = 'PAID' THEN cli.LINE_BILLED_AMOUNT ELSE 0 END), 0) AS TOTAL_REVENUE
     FROM MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIM_LINE_ITEMS cli
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_BILLING.CLAIMS c ON cli.CLAIM_ID = c.CLAIM_ID
     LEFT JOIN MEDICORE_ANALYTICS_DB.DEV_REFERENCE.DIM_DEPARTMENTS d ON cli.DEPARTMENT_ID = d.DEPARTMENT_ID
@@ -276,7 +292,7 @@ selected_statuses = st.sidebar.multiselect(
 kpis = load_revenue_kpis(session, start_date, end_date, selected_payers, selected_departments, selected_statuses)
 
 st.subheader("Key Performance Indicators")
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
 
 with col1:
     total_billed = int(kpis["TOTAL_BILLED"].iloc[0]) if not kpis.empty else 0
@@ -291,8 +307,16 @@ with col3:
     st.metric("Net Revenue", f"${net_revenue:,}")
 
 with col4:
+    total_denied = int(kpis["TOTAL_DENIED_AMOUNT"].iloc[0]) if not kpis.empty else 0
+    st.metric("Total Denied", f"${total_denied:,}")
+
+with col5:
     denial_rate = float(kpis["DENIAL_RATE"].iloc[0]) if not kpis.empty else 0.0
     st.metric("Denial Rate", f"{denial_rate:.2f}%")
+
+with col6:
+    collection_rate = float(kpis["COLLECTION_RATE"].iloc[0]) if not kpis.empty else 0.0
+    st.metric("Collection Rate", f"{collection_rate:.2f}%")
 
 st.divider()
 
@@ -301,7 +325,7 @@ revenue_trend = load_revenue_trend(session, start_date, end_date, selected_payer
 
 if not revenue_trend.empty:
     revenue_trend["MONTH_KEY"] = pd.to_datetime(revenue_trend["MONTH_KEY"])
-    st.area_chart(revenue_trend, x="MONTH_KEY", y=["BILLED_AMOUNT", "NET_REVENUE"])
+    st.area_chart(revenue_trend, x="MONTH_KEY", y=["BILLED_AMOUNT", "NET_REVENUE", "DENIED_AMOUNT"])
 else:
     st.info("No revenue trend data available for the selected filters.")
 
@@ -311,7 +335,7 @@ st.subheader("Denial Analysis")
 col_denial_trend, col_denial_payer = st.columns(2)
 
 with col_denial_trend:
-    st.caption("Denial Rate Trend (%)")
+    st.caption("Denial Rate Trend (%) - Adjudicated Claims Only")
     denial_trend = load_denial_trend(session, start_date, end_date, selected_payers, selected_departments, selected_statuses)
     if not denial_trend.empty:
         denial_trend["MONTH_KEY"] = pd.to_datetime(denial_trend["MONTH_KEY"])
@@ -320,16 +344,16 @@ with col_denial_trend:
         st.info("No denial trend data available.")
 
 with col_denial_payer:
-    st.caption("Denials by Payer")
+    st.caption("Denied Amount by Payer ($)")
     denials_by_payer = load_denials_by_payer(session, start_date, end_date, selected_departments, selected_statuses)
     if not denials_by_payer.empty:
-        st.bar_chart(denials_by_payer, x="PAYER_TYPE", y="DENIED_COUNT")
+        st.bar_chart(denials_by_payer, x="PAYER_TYPE", y="DENIED_AMOUNT")
     else:
         st.info("No denial data by payer available.")
 
 st.divider()
 
-st.subheader("Payer Mix - Revenue by Payer Type")
+st.subheader("Payer Mix - Net Revenue by Payer Type (Paid Claims Only)")
 payer_mix = load_payer_mix(session, start_date, end_date, selected_departments, selected_statuses)
 
 if not payer_mix.empty:
@@ -339,7 +363,7 @@ else:
 
 st.divider()
 
-st.subheader("Top 10 Procedures by Revenue")
+st.subheader("Top 10 Procedures by Net Revenue (Paid Claims Only)")
 top_procedures = load_top_procedures(session, start_date, end_date, selected_payers, selected_departments, selected_statuses)
 
 if not top_procedures.empty:

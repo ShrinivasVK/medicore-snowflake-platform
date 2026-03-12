@@ -76,12 +76,21 @@ CREATE TABLE IF NOT EXISTS MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS (
     encounter_type          STRING                      COMMENT 'Encounter classification - uppercase',
     primary_icd10_code      STRING                      COMMENT 'Primary diagnosis code (logical FK) - uppercase',
     created_at              TIMESTAMP_NTZ               COMMENT 'Original record creation timestamp',
+    is_inpatient_flag       BOOLEAN                     COMMENT 'True if encounter_type = INPATIENT',
+    length_of_stay_days     NUMBER(5,0)                 COMMENT 'Discharge date minus admission date in days (min 1)',
+    encounter_month         DATE                        COMMENT 'First day of the month of admission_date',
+    discharge_month         DATE                        COMMENT 'First day of the month of discharge_date',
     load_timestamp          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP() COMMENT 'ETL load timestamp',
     record_source           STRING          DEFAULT 'RAW_CLINICAL' COMMENT 'Source system identifier',
     data_quality_status     STRING          DEFAULT 'VALIDATED' COMMENT 'Data quality validation status',
     CONSTRAINT pk_encounters PRIMARY KEY (encounter_id)
 )
 COMMENT = 'Silver/Transform layer - Cleaned and validated encounters fact table';
+
+ALTER TABLE MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS ADD COLUMN IF NOT EXISTS IS_INPATIENT_FLAG BOOLEAN;
+ALTER TABLE MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS ADD COLUMN IF NOT EXISTS LENGTH_OF_STAY_DAYS NUMBER(5,0);
+ALTER TABLE MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS ADD COLUMN IF NOT EXISTS ENCOUNTER_MONTH DATE;
+ALTER TABLE MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS ADD COLUMN IF NOT EXISTS DISCHARGE_MONTH DATE;
 
 -- ============================================================================
 -- STEP 2: CREATE QUARANTINE TABLE (IF NOT EXISTS)
@@ -101,6 +110,12 @@ CREATE TABLE IF NOT EXISTS MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS_QUARANT
     load_timestamp          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP() COMMENT 'Quarantine load timestamp'
 )
 COMMENT = 'Quarantine table for ENCOUNTERS records failing validation';
+
+ALTER TABLE MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS_QUARANTINE ADD COLUMN IF NOT EXISTS IS_INPATIENT_FLAG BOOLEAN;
+ALTER TABLE MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS_QUARANTINE ADD COLUMN IF NOT EXISTS LENGTH_OF_STAY_DAYS NUMBER(5,0);
+ALTER TABLE MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS_QUARANTINE ADD COLUMN IF NOT EXISTS ENCOUNTER_MONTH DATE;
+ALTER TABLE MEDICORE_TRANSFORM_DB.DEV_CLINICAL.ENCOUNTERS_QUARANTINE ADD COLUMN IF NOT EXISTS DISCHARGE_MONTH DATE;
+
 
 -- ============================================================================
 -- STEP 3: MERGE QUARANTINED RECORDS
@@ -178,6 +193,17 @@ USING (
         UPPER(TRIM(src.encounter_type))         AS encounter_type,
         UPPER(TRIM(src.primary_icd10_code))     AS primary_icd10_code,
         src.created_at                          AS created_at,
+        CASE 
+            WHEN UPPER(TRIM(src.encounter_type)) = 'INPATIENT' THEN TRUE 
+            ELSE FALSE 
+        END                                     AS is_inpatient_flag,
+        CASE 
+            WHEN src.discharge_date IS NOT NULL AND src.admission_date IS NOT NULL
+            THEN GREATEST(DATEDIFF('day', src.admission_date, src.discharge_date), 1)
+            ELSE NULL
+        END                                     AS length_of_stay_days,
+        DATE_TRUNC('MONTH', src.admission_date) AS encounter_month,
+        DATE_TRUNC('MONTH', src.discharge_date) AS discharge_month,
         CURRENT_TIMESTAMP()                     AS load_timestamp,
         'RAW_CLINICAL'                          AS record_source,
         'VALIDATED'                             AS data_quality_status
@@ -208,15 +234,21 @@ WHEN MATCHED AND (
     tgt.encounter_type      = src.encounter_type,
     tgt.primary_icd10_code  = src.primary_icd10_code,
     tgt.created_at          = src.created_at,
+    tgt.is_inpatient_flag   = src.is_inpatient_flag,
+    tgt.length_of_stay_days = src.length_of_stay_days,
+    tgt.encounter_month     = src.encounter_month,
+    tgt.discharge_month     = src.discharge_month,
     tgt.load_timestamp      = src.load_timestamp,
     tgt.record_source       = src.record_source,
     tgt.data_quality_status = src.data_quality_status
 WHEN NOT MATCHED THEN INSERT (
     encounter_id, patient_id, provider_id, department_id, admission_date, discharge_date,
-    encounter_type, primary_icd10_code, created_at, load_timestamp, record_source, data_quality_status
+    encounter_type, primary_icd10_code, created_at, is_inpatient_flag, length_of_stay_days,
+    encounter_month, discharge_month, load_timestamp, record_source, data_quality_status
 ) VALUES (
     src.encounter_id, src.patient_id, src.provider_id, src.department_id, src.admission_date, src.discharge_date,
-    src.encounter_type, src.primary_icd10_code, src.created_at, src.load_timestamp, src.record_source, src.data_quality_status
+    src.encounter_type, src.primary_icd10_code, src.created_at, src.is_inpatient_flag, src.length_of_stay_days,
+    src.encounter_month, src.discharge_month, src.load_timestamp, src.record_source, src.data_quality_status
 );
 
 -- ============================================================================

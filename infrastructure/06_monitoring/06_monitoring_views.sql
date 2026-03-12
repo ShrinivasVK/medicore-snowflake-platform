@@ -111,8 +111,8 @@ SELECT
     QUEUED_OVERLOAD_TIME / 1000                             AS QUEUED_TIME_SECONDS,
     BYTES_SCANNED                                           AS BYTES_SCANNED,
     ROWS_PRODUCED                                           AS ROWS_PRODUCED,
-    BYTES_WRITTEN                                           AS BYTES_WRITTEN,
-    ROWS_WRITTEN                                            AS ROWS_WRITTEN,
+    BYTES_WRITTEN_TO_RESULT                                 AS BYTES_WRITTEN,
+    ROWS_WRITTEN_TO_RESULT                                  AS ROWS_WRITTEN,
     PARTITIONS_SCANNED                                      AS PARTITIONS_SCANNED,
     PARTITIONS_TOTAL                                        AS PARTITIONS_TOTAL,
     ROUND(PARTITIONS_SCANNED / NULLIF(PARTITIONS_TOTAL, 0) * 100, 2) 
@@ -203,7 +203,7 @@ ORDER BY START_TIME DESC;
 -- Data Latency: Up to 3 hours
 -- ------------------------------------------------------------
 CREATE OR REPLACE VIEW MEDICORE_GOVERNANCE_DB.AUDIT.V_RESOURCE_MONITOR_STATUS
-    COMMENT = 'Resource monitor consumption and thresholds for MEDICORE monitors. Tracks quota usage and proximity to suspend triggers. Data latency: up to 3 hours from SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS.'
+    COMMENT = 'Resource monitor consumption and thresholds for MEDICORE monitors. Tracks quota usage. Data latency: up to 3 hours from SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS.'
 AS
 SELECT
     NAME                                                    AS MONITOR_NAME,
@@ -211,23 +211,15 @@ SELECT
     USED_CREDITS                                            AS USED_CREDITS,
     REMAINING_CREDITS                                       AS REMAINING_CREDITS,
     ROUND(USED_CREDITS / NULLIF(CREDIT_QUOTA, 0) * 100, 2)  AS PERCENTAGE_USED,
-    FREQUENCY                                               AS RESET_FREQUENCY,
-    START_TIME                                              AS PERIOD_START,
-    END_TIME                                                AS PERIOD_END,
-    SUSPEND_AT                                              AS SUSPEND_TRIGGER_PERCENT,
-    SUSPEND_IMMEDIATELY_AT                                  AS SUSPEND_IMMEDIATE_PERCENT,
-    NOTIFY_AT                                               AS NOTIFY_TRIGGER_PERCENT,
     CASE 
         WHEN USED_CREDITS / NULLIF(CREDIT_QUOTA, 0) >= 0.90 THEN 'CRITICAL'
         WHEN USED_CREDITS / NULLIF(CREDIT_QUOTA, 0) >= 0.75 THEN 'WARNING'
         WHEN USED_CREDITS / NULLIF(CREDIT_QUOTA, 0) >= 0.50 THEN 'MODERATE'
         ELSE 'HEALTHY'
     END                                                     AS HEALTH_STATUS,
-    CREATED_ON                                              AS MONITOR_CREATED_ON,
     CURRENT_TIMESTAMP()                                     AS CREATED_AT
 FROM SNOWFLAKE.ACCOUNT_USAGE.RESOURCE_MONITORS
 WHERE NAME LIKE 'MEDICORE_%'
-  AND DELETED IS NULL
 ORDER BY PERCENTAGE_USED DESC;
 
 

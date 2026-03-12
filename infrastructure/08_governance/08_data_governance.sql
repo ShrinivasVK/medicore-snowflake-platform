@@ -287,6 +287,46 @@ CREATE OR REPLACE TAG MEDICORE_GOVERNANCE_DB.TAGS.CONSENT_REQUIRED
 CREATE OR REPLACE TAG MEDICORE_GOVERNANCE_DB.TAGS.RETENTION_POLICY
     COMMENT = 'Retention period. Values: 7_YEARS (HIPAA standard), 10_YEARS (extended), PERMANENT, 1_YEAR (operational), 90_DAYS (transient)';
 
+-- ------------------------------------------------------------
+-- TAG: DATA_OWNER
+-- ------------------------------------------------------------
+-- Identifies the responsible team or individual for data stewardship.
+-- Used for governance accountability and issue escalation.
+--
+-- Allowed Values:
+--   Free-form text identifying team or individual owner
+-- ------------------------------------------------------------
+CREATE OR REPLACE TAG MEDICORE_GOVERNANCE_DB.TAGS.DATA_OWNER
+    COMMENT = 'Data stewardship owner. Free-form text identifying responsible team or individual for governance accountability.';
+
+-- ------------------------------------------------------------
+-- TAG: COST_CENTER
+-- ------------------------------------------------------------
+-- Cost allocation center for resource usage tracking.
+-- Used for chargeback and budget allocation.
+--
+-- Allowed Values:
+--   Free-form text identifying cost center code
+-- ------------------------------------------------------------
+CREATE OR REPLACE TAG MEDICORE_GOVERNANCE_DB.TAGS.COST_CENTER
+    COMMENT = 'Cost allocation center for chargeback and budget tracking. Free-form text for cost center code.';
+
+-- ------------------------------------------------------------
+-- TAG: PHI_CLASSIFICATION
+-- ------------------------------------------------------------
+-- HIPAA Safe Harbor classification for protected health information.
+-- Used to identify and manage PHI data elements.
+--
+-- Allowed Values:
+--   DIRECT_IDENTIFIER   - 18 HIPAA identifiers (name, SSN, etc.)
+--   QUASI_IDENTIFIER    - Data with re-identification risk
+--   SENSITIVE_CLINICAL  - Protected clinical/medical data
+--   NON_PHI            - Non-protected information
+-- ------------------------------------------------------------
+CREATE OR REPLACE TAG MEDICORE_GOVERNANCE_DB.TAGS.PHI_CLASSIFICATION
+    ALLOWED_VALUES 'DIRECT_IDENTIFIER', 'QUASI_IDENTIFIER', 'SENSITIVE_CLINICAL', 'NON_PHI'
+    COMMENT = 'HIPAA Safe Harbor classification. Values: DIRECT_IDENTIFIER (18 identifiers), QUASI_IDENTIFIER (re-identification risk), SENSITIVE_CLINICAL (clinical data), NON_PHI (non-protected)';
+
 
 -- ============================================================
 -- SECTION 2: MASKING POLICIES
@@ -327,9 +367,7 @@ USE SCHEMA MEDICORE_GOVERNANCE_DB.POLICIES;
 -- ------------------------------------------------------------
 CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_DIRECT_IDENTIFIER
     AS (val STRING)
-    RETURNS STRING
-    COMMENT = 'Masks direct identifiers (HIPAA Safe Harbor 18). Full access: CLINICAL_PHYSICIAN, COMPLIANCE_OFFICER. Others: REDACTED.'
-    ->
+    RETURNS STRING ->
     CASE
         WHEN CURRENT_ROLE() IN (
             'MEDICORE_CLINICAL_PHYSICIAN',
@@ -337,7 +375,8 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_DIRECT_IDE
             'ACCOUNTADMIN'
         ) THEN val
         ELSE '***REDACTED***'
-    END;
+    END
+    COMMENT = 'Masks direct identifiers (HIPAA Safe Harbor 18). Full access: CLINICAL_PHYSICIAN, COMPLIANCE_OFFICER. Others: REDACTED.';
 
 -- ------------------------------------------------------------
 -- MASKING POLICY: MASK_QUASI_IDENTIFIER
@@ -361,9 +400,7 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_DIRECT_IDE
 -- ------------------------------------------------------------
 CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDENTIFIER
     AS (val STRING)
-    RETURNS STRING
-    COMMENT = 'Generalizes quasi-identifiers. Full access: CLINICAL_PHYSICIAN, COMPLIANCE_OFFICER. Others: generalized (dates->year, ZIP->3 digits).'
-    ->
+    RETURNS STRING ->
     CASE
         WHEN CURRENT_ROLE() IN (
             'MEDICORE_CLINICAL_PHYSICIAN',
@@ -376,7 +413,8 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDEN
             LEFT(val, 3) || 'XX'
         ELSE
             '***GENERALIZED***'
-    END;
+    END
+    COMMENT = 'Generalizes quasi-identifiers. Full access: CLINICAL_PHYSICIAN, COMPLIANCE_OFFICER. Others: generalized (dates->year, ZIP->3 digits).';
 
 -- ------------------------------------------------------------
 -- MASKING POLICY: MASK_QUASI_IDENTIFIER_DATE
@@ -386,9 +424,7 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDEN
 -- ------------------------------------------------------------
 CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDENTIFIER_DATE
     AS (val DATE)
-    RETURNS DATE
-    COMMENT = 'Generalizes date quasi-identifiers to year. Full access: CLINICAL_PHYSICIAN, COMPLIANCE_OFFICER.'
-    ->
+    RETURNS DATE ->
     CASE
         WHEN CURRENT_ROLE() IN (
             'MEDICORE_CLINICAL_PHYSICIAN',
@@ -397,7 +433,8 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDEN
         ) THEN val
         ELSE
             DATE_TRUNC('YEAR', val)::DATE
-    END;
+    END
+    COMMENT = 'Generalizes date quasi-identifiers to year. Full access: CLINICAL_PHYSICIAN, COMPLIANCE_OFFICER.';
 
 -- ------------------------------------------------------------
 -- MASKING POLICY: MASK_QUASI_IDENTIFIER_TIMESTAMP
@@ -407,9 +444,7 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDEN
 -- ------------------------------------------------------------
 CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDENTIFIER_TIMESTAMP
     AS (val TIMESTAMP_NTZ)
-    RETURNS TIMESTAMP_NTZ
-    COMMENT = 'Generalizes timestamp quasi-identifiers to year. Full access: CLINICAL_PHYSICIAN, COMPLIANCE_OFFICER.'
-    ->
+    RETURNS TIMESTAMP_NTZ ->
     CASE
         WHEN CURRENT_ROLE() IN (
             'MEDICORE_CLINICAL_PHYSICIAN',
@@ -418,7 +453,8 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDEN
         ) THEN val
         ELSE
             DATE_TRUNC('YEAR', val)::TIMESTAMP_NTZ
-    END;
+    END
+    COMMENT = 'Generalizes timestamp quasi-identifiers to year. Full access: CLINICAL_PHYSICIAN, COMPLIANCE_OFFICER.';
 
 -- ------------------------------------------------------------
 -- MASKING POLICY: MASK_SENSITIVE_CLINICAL
@@ -440,9 +476,7 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_QUASI_IDEN
 -- ------------------------------------------------------------
 CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_SENSITIVE_CLINICAL
     AS (val STRING)
-    RETURNS STRING
-    COMMENT = 'Masks sensitive clinical data. Access: CLINICAL_PHYSICIAN, CLINICAL_NURSE, COMPLIANCE_OFFICER. Others: NULL.'
-    ->
+    RETURNS STRING ->
     CASE
         WHEN CURRENT_ROLE() IN (
             'MEDICORE_CLINICAL_PHYSICIAN',
@@ -451,7 +485,8 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_SENSITIVE_
             'ACCOUNTADMIN'
         ) THEN val
         ELSE NULL
-    END;
+    END
+    COMMENT = 'Masks sensitive clinical data. Access: CLINICAL_PHYSICIAN, CLINICAL_NURSE, COMPLIANCE_OFFICER. Others: NULL.';
 
 -- ------------------------------------------------------------
 -- MASKING POLICY: MASK_42CFR_PART2
@@ -479,16 +514,15 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_SENSITIVE_
 -- ------------------------------------------------------------
 CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_42CFR_PART2
     AS (val STRING)
-    RETURNS STRING
-    COMMENT = '42 CFR Part 2 protection for substance abuse data. ONLY COMPLIANCE_OFFICER has access. Clinical roles require explicit patient consent (future integration).'
-    ->
+    RETURNS STRING ->
     CASE
         WHEN CURRENT_ROLE() IN (
             'MEDICORE_COMPLIANCE_OFFICER',
             'ACCOUNTADMIN'
         ) THEN val
         ELSE NULL
-    END;
+    END
+    COMMENT = '42 CFR Part 2 protection for substance abuse data. ONLY COMPLIANCE_OFFICER has access. Clinical roles require explicit patient consent (future integration).';
 
 -- ------------------------------------------------------------
 -- MASKING POLICY: MASK_FINANCIAL_PII
@@ -503,9 +537,7 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_42CFR_PART
 -- ------------------------------------------------------------
 CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_FINANCIAL_PII
     AS (val STRING)
-    RETURNS STRING
-    COMMENT = 'Masks financial PII. Full access: BILLING_SPECIALIST, COMPLIANCE_OFFICER. Others: last 4 digits only.'
-    ->
+    RETURNS STRING ->
     CASE
         WHEN CURRENT_ROLE() IN (
             'MEDICORE_BILLING_SPECIALIST',
@@ -516,7 +548,8 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_FINANCIAL_
             REPEAT('*', LENGTH(val) - 4) || RIGHT(val, 4)
         ELSE
             '****'
-    END;
+    END
+    COMMENT = 'Masks financial PII. Full access: BILLING_SPECIALIST, COMPLIANCE_OFFICER. Others: last 4 digits only.';
 
 
 -- ============================================================
@@ -558,9 +591,7 @@ CREATE OR REPLACE MASKING POLICY MEDICORE_GOVERNANCE_DB.POLICIES.MASK_FINANCIAL_
 -- ------------------------------------------------------------
 CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_CLINICAL
     AS (data_subdomain STRING)
-    RETURNS BOOLEAN
-    COMMENT = 'Row-level clinical access. SUBSTANCE_ABUSE: COMPLIANCE only. MENTAL_HEALTH: Clinical+COMPLIANCE. Others: standard clinical access.'
-    ->
+    RETURNS BOOLEAN ->
     CASE
         WHEN data_subdomain = 'SUBSTANCE_ABUSE' THEN
             CURRENT_ROLE() IN (
@@ -589,7 +620,8 @@ CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_C
                 'MEDICORE_COMPLIANCE_OFFICER',
                 'ACCOUNTADMIN'
             )
-    END;
+    END
+    COMMENT = 'Row-level clinical access. SUBSTANCE_ABUSE: COMPLIANCE only. MENTAL_HEALTH: Clinical+COMPLIANCE. Others: standard clinical access.';
 
 -- ------------------------------------------------------------
 -- ROW ACCESS POLICY: ROW_ACCESS_ENVIRONMENT
@@ -614,9 +646,7 @@ CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_C
 -- ------------------------------------------------------------
 CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_ENVIRONMENT
     AS (environment STRING, contains_phi BOOLEAN)
-    RETURNS BOOLEAN
-    COMMENT = 'Environment-based PHI protection. QA/DEV with PHI: engineering only (safety net). Primary control: synthetic data in non-PROD.'
-    ->
+    RETURNS BOOLEAN ->
     CASE
         WHEN environment = 'PROD' THEN
             TRUE
@@ -629,7 +659,8 @@ CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_E
             )
         ELSE
             TRUE
-    END;
+    END
+    COMMENT = 'Environment-based PHI protection. QA/DEV with PHI: engineering only (safety net). Primary control: synthetic data in non-PROD.';
 
 -- ------------------------------------------------------------
 -- ROW ACCESS POLICY: ROW_ACCESS_CONSENT
@@ -660,9 +691,7 @@ CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_E
 -- ------------------------------------------------------------
 CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_CONSENT
     AS (consent_type STRING, patient_id STRING)
-    RETURNS BOOLEAN
-    COMMENT = 'Consent-based access framework. 42CFR_CONSENT: COMPLIANCE only. HIPAA_AUTH: Clinical+COMPLIANCE. Future: consent registry integration.'
-    ->
+    RETURNS BOOLEAN ->
     CASE
         WHEN consent_type = '42CFR_CONSENT' THEN
             CURRENT_ROLE() IN (
@@ -684,7 +713,8 @@ CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_C
             )
         ELSE
             TRUE
-    END;
+    END
+    COMMENT = 'Consent-based access framework. 42CFR_CONSENT: COMPLIANCE only. HIPAA_AUTH: Clinical+COMPLIANCE. Future: consent registry integration.';
 
 -- ------------------------------------------------------------
 -- ROW ACCESS POLICY: ROW_ACCESS_DATA_QUALITY
@@ -701,9 +731,7 @@ CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_C
 -- ------------------------------------------------------------
 CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_DATA_QUALITY
     AS (dq_status STRING)
-    RETURNS BOOLEAN
-    COMMENT = 'Data quality-based access. CERTIFIED: all. UNDER_REVIEW: engineers+compliance. QUARANTINED/DEPRECATED: engineers only.'
-    ->
+    RETURNS BOOLEAN ->
     CASE
         WHEN dq_status = 'CERTIFIED' THEN
             TRUE
@@ -722,7 +750,8 @@ CREATE OR REPLACE ROW ACCESS POLICY MEDICORE_GOVERNANCE_DB.POLICIES.ROW_ACCESS_D
             )
         ELSE
             TRUE
-    END;
+    END
+    COMMENT = 'Data quality-based access. CERTIFIED: all. UNDER_REVIEW: engineers+compliance. QUARANTINED/DEPRECATED: engineers only.';
 
 
 -- ============================================================

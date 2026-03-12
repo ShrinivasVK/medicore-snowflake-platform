@@ -18,8 +18,12 @@ def load_executive_snapshot(_session, start_date, end_date):
     ),
     revenue_data AS (
         SELECT 
+            COALESCE(SUM(TOTAL_BILLED_AMOUNT), 0) AS TOTAL_BILLED,
+            COALESCE(SUM(TOTAL_PAID_AMOUNT), 0) AS TOTAL_PAID,
             COALESCE(SUM(TOTAL_NET_REVENUE), 0) AS TOTAL_NET_REVENUE,
-            COALESCE(AVG(DENIAL_RATE_PERCENT), 0) AS AVG_DENIAL_RATE
+            COALESCE(SUM(TOTAL_DENIED_AMOUNT), 0) AS TOTAL_DENIED_AMOUNT,
+            COALESCE(AVG(DENIAL_RATE_PERCENT), 0) AS AVG_DENIAL_RATE,
+            COALESCE(AVG(COLLECTION_RATE_PERCENT), 0) AS AVG_COLLECTION_RATE
         FROM MEDICORE_ANALYTICS_DB.DEV_EXECUTIVE.KPI_REVENUE_SUMMARY
         WHERE MONTH_KEY >= '{start_date}' AND MONTH_KEY <= '{end_date}'
     ),
@@ -33,8 +37,12 @@ def load_executive_snapshot(_session, start_date, end_date):
     SELECT 
         p.TOTAL_PATIENTS,
         p.TOTAL_ENCOUNTERS,
+        r.TOTAL_BILLED,
+        r.TOTAL_PAID,
         r.TOTAL_NET_REVENUE,
+        r.TOTAL_DENIED_AMOUNT,
         r.AVG_DENIAL_RATE,
+        r.AVG_COLLECTION_RATE,
         c.AVG_READMISSION_RATE,
         c.AVG_LOS
     FROM patient_data p, revenue_data r, clinical_data c
@@ -79,7 +87,9 @@ def load_revenue_trend(_session, start_date, end_date, show_growth):
         MONTH_KEY,
         COALESCE(TOTAL_BILLED_AMOUNT, 0) AS BILLED,
         COALESCE(TOTAL_PAID_AMOUNT, 0) AS PAID,
-        COALESCE(TOTAL_NET_REVENUE, 0) AS NET_REVENUE{growth_col}
+        COALESCE(TOTAL_NET_REVENUE, 0) AS NET_REVENUE,
+        COALESCE(TOTAL_DENIED_AMOUNT, 0) AS DENIED,
+        COALESCE(COLLECTION_RATE_PERCENT, 0) AS COLLECTION_RATE{growth_col}
     FROM MEDICORE_ANALYTICS_DB.DEV_EXECUTIVE.KPI_REVENUE_SUMMARY
     WHERE MONTH_KEY >= '{start_date}' AND MONTH_KEY <= '{end_date}'
     ORDER BY MONTH_KEY
@@ -105,7 +115,7 @@ st.sidebar.header("Filters")
 
 date_range = st.sidebar.date_input(
     "Date Range",
-    value=(pd.to_datetime("2025-01-01"), pd.to_datetime("2025-12-31")),
+    value=(pd.to_datetime("2025-01-01"), pd.to_datetime("2026-12-31")),  # Extended to 2026
     key="date_range"
 )
 
@@ -121,8 +131,9 @@ show_growth = st.sidebar.toggle("Show Growth Metrics", value=False)
 snapshot = load_executive_snapshot(session, start_date, end_date)
 
 st.subheader("Executive Snapshot")
+st.caption(f"Showing data for: {start_date} to {end_date}")
 
-row1_col1, row1_col2, row1_col3 = st.columns(3)
+row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
 
 with row1_col1:
     total_patients = int(snapshot["TOTAL_PATIENTS"].iloc[0]) if not snapshot.empty else 0
@@ -133,22 +144,36 @@ with row1_col2:
     st.metric("Total Encounters", f"{total_encounters:,}")
 
 with row1_col3:
-    net_revenue = int(snapshot["TOTAL_NET_REVENUE"].iloc[0]) if not snapshot.empty else 0
-    st.metric("Total Net Revenue", f"${net_revenue:,}")
+    total_billed = int(snapshot["TOTAL_BILLED"].iloc[0]) if not snapshot.empty else 0
+    st.metric("Total Billed", f"${total_billed:,}")
 
-row2_col1, row2_col2, row2_col3 = st.columns(3)
+with row1_col4:
+    net_revenue = int(snapshot["TOTAL_NET_REVENUE"].iloc[0]) if not snapshot.empty else 0
+    st.metric("Net Revenue (Paid)", f"${net_revenue:,}")
+
+row2_col1, row2_col2, row2_col3, row2_col4 = st.columns(4)
 
 with row2_col1:
+    denied_amount = int(snapshot["TOTAL_DENIED_AMOUNT"].iloc[0]) if not snapshot.empty else 0
+    st.metric("Denied Amount", f"${denied_amount:,}", delta_color="inverse")
+
+with row2_col2:
     denial_rate = float(snapshot["AVG_DENIAL_RATE"].iloc[0]) if not snapshot.empty else 0.0
     st.metric("Denial Rate", f"{denial_rate:.2f}%")
 
-with row2_col2:
-    readmission_rate = float(snapshot["AVG_READMISSION_RATE"].iloc[0]) if not snapshot.empty else 0.0
-    st.metric("Readmission Rate", f"{readmission_rate:.2f}%")
-
 with row2_col3:
+    collection_rate = float(snapshot["AVG_COLLECTION_RATE"].iloc[0]) if not snapshot.empty else 0.0
+    st.metric("Collection Rate", f"{collection_rate:.2f}%")
+
+with row2_col4:
     avg_los = float(snapshot["AVG_LOS"].iloc[0]) if not snapshot.empty else 0.0
     st.metric("Avg Length of Stay", f"{avg_los:.1f} days")
+
+row3_col1, row3_col2 = st.columns(2)
+
+with row3_col1:
+    readmission_rate = float(snapshot["AVG_READMISSION_RATE"].iloc[0]) if not snapshot.empty else 0.0
+    st.metric("30-Day Readmission Rate", f"{readmission_rate:.2f}%")
 
 st.divider()
 
@@ -168,7 +193,7 @@ with col_patient:
         st.info("No patient data available.")
 
 with col_revenue:
-    st.caption("Monthly Net Revenue")
+    st.caption("Monthly Net Revenue (Cash Collected)")
     revenue_trend = load_revenue_trend(session, start_date, end_date, show_growth)
     if not revenue_trend.empty:
         revenue_trend["MONTH_KEY"] = pd.to_datetime(revenue_trend["MONTH_KEY"])
@@ -193,7 +218,7 @@ if not clinical_trend.empty:
         st.line_chart(clinical_trend, x="MONTH_KEY", y="AVG_LOS")
     
     with col_readmit:
-        st.caption("Readmission Rate (%)")
+        st.caption("30-Day Readmission Rate (%)")
         st.line_chart(clinical_trend, x="MONTH_KEY", y="READMISSION_RATE")
 else:
     st.info("No clinical efficiency data available.")
@@ -201,14 +226,18 @@ else:
 st.divider()
 
 st.subheader("Financial Health")
+st.caption("Billed vs Paid vs Denied by Month")
 if not revenue_trend.empty:
     revenue_trend["MONTH_KEY"] = pd.to_datetime(revenue_trend["MONTH_KEY"])
     revenue_melted = revenue_trend.melt(
         id_vars=["MONTH_KEY"],
-        value_vars=["BILLED", "PAID", "NET_REVENUE"],
+        value_vars=["BILLED", "PAID", "DENIED"],
         var_name="Type",
         value_name="Amount"
     )
     st.bar_chart(revenue_melted, x="MONTH_KEY", y="Amount", color="Type")
+    
+    st.caption("Monthly Collection Rate (%)")
+    st.line_chart(revenue_trend, x="MONTH_KEY", y="COLLECTION_RATE")
 else:
     st.info("No financial data available.")

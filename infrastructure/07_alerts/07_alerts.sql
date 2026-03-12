@@ -73,24 +73,7 @@ CREATE OR REPLACE ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_RESOURCE_MONITOR_CRIT
         CALL SYSTEM$SEND_EMAIL(
             'platform-alerts@medicore-health.com',
             'CRITICAL: MediCore Resource Monitor Alert - Near Suspension Threshold',
-            (SELECT OBJECT_CONSTRUCT(
-                'severity', 'CRITICAL',
-                'alert_name', 'ALERT_RESOURCE_MONITOR_CRITICAL',
-                'event_timestamp', CURRENT_TIMESTAMP()::VARCHAR,
-                'description', 'One or more resource monitors have reached 90% or higher credit consumption',
-                'monitors_affected', (
-                    SELECT ARRAY_AGG(OBJECT_CONSTRUCT(
-                        'monitor_name', MONITOR_NAME,
-                        'percentage_used', PERCENTAGE_USED,
-                        'credit_quota', CREDIT_QUOTA,
-                        'remaining_credits', REMAINING_CREDITS,
-                        'health_status', HEALTH_STATUS
-                    ))
-                    FROM MEDICORE_GOVERNANCE_DB.AUDIT.V_RESOURCE_MONITOR_STATUS
-                    WHERE PERCENTAGE_USED >= 90
-                ),
-                'recommended_action', 'Review credit consumption immediately. Consider increasing quota or optimizing workloads.'
-            )::VARCHAR)
+            'One or more resource monitors have reached 90% or higher credit consumption. Review immediately.'
         );
 
 
@@ -120,33 +103,7 @@ CREATE OR REPLACE ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_LONG_RUNNING_QUERY
         CALL SYSTEM$SEND_EMAIL(
             'platform-alerts@medicore-health.com',
             'WARNING: MediCore Long Running Query Alert',
-            (SELECT OBJECT_CONSTRUCT(
-                'severity', 'WARNING',
-                'alert_name', 'ALERT_LONG_RUNNING_QUERY',
-                'event_timestamp', CURRENT_TIMESTAMP()::VARCHAR,
-                'description', 'Long-running queries detected in the last 15 minutes',
-                'query_count', (
-                    SELECT COUNT(*)
-                    FROM MEDICORE_GOVERNANCE_DB.AUDIT.V_LONG_RUNNING_QUERIES
-                    WHERE START_TIME >= DATEADD('MINUTE', -15, CURRENT_TIMESTAMP())
-                ),
-                'sample_queries', (
-                    SELECT ARRAY_AGG(OBJECT_CONSTRUCT(
-                        'query_id', QUERY_ID,
-                        'user_name', USER_NAME,
-                        'warehouse_name', WAREHOUSE_NAME,
-                        'execution_time_minutes', EXECUTION_TIME_MINUTES
-                    ))
-                    FROM (
-                        SELECT QUERY_ID, USER_NAME, WAREHOUSE_NAME, EXECUTION_TIME_MINUTES
-                        FROM MEDICORE_GOVERNANCE_DB.AUDIT.V_LONG_RUNNING_QUERIES
-                        WHERE START_TIME >= DATEADD('MINUTE', -15, CURRENT_TIMESTAMP())
-                        ORDER BY EXECUTION_TIME_MINUTES DESC
-                        LIMIT 5
-                    )
-                ),
-                'recommended_action', 'Review query patterns and consider optimization or warehouse sizing adjustments.'
-            )::VARCHAR)
+            'Long-running queries (>5 min) detected in the last 15 minutes. Review query patterns for optimization.'
         );
 
 
@@ -174,32 +131,7 @@ CREATE OR REPLACE ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_FAILED_QUERY_SPIKE
         CALL SYSTEM$SEND_EMAIL(
             'platform-alerts@medicore-health.com',
             'WARNING: MediCore Failed Query Spike Alert',
-            (SELECT OBJECT_CONSTRUCT(
-                'severity', 'WARNING',
-                'alert_name', 'ALERT_FAILED_QUERY_SPIKE',
-                'event_timestamp', CURRENT_TIMESTAMP()::VARCHAR,
-                'description', 'More than 10 failed queries detected in the last 15 minutes',
-                'failed_query_count', (
-                    SELECT COUNT(*)
-                    FROM MEDICORE_GOVERNANCE_DB.AUDIT.V_FAILED_QUERIES
-                    WHERE START_TIME >= DATEADD('MINUTE', -15, CURRENT_TIMESTAMP())
-                ),
-                'error_summary', (
-                    SELECT ARRAY_AGG(OBJECT_CONSTRUCT(
-                        'error_code', ERROR_CODE,
-                        'occurrence_count', cnt
-                    ))
-                    FROM (
-                        SELECT ERROR_CODE, COUNT(*) AS cnt
-                        FROM MEDICORE_GOVERNANCE_DB.AUDIT.V_FAILED_QUERIES
-                        WHERE START_TIME >= DATEADD('MINUTE', -15, CURRENT_TIMESTAMP())
-                        GROUP BY ERROR_CODE
-                        ORDER BY cnt DESC
-                        LIMIT 5
-                    )
-                ),
-                'recommended_action', 'Review error codes and investigate affected users or workloads.'
-            )::VARCHAR)
+            'More than 10 failed queries detected in the last 15 minutes. Review error codes and investigate.'
         );
 
 
@@ -229,23 +161,7 @@ CREATE OR REPLACE ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_HIGH_WAREHOUSE_QUEUE
         CALL SYSTEM$SEND_EMAIL(
             'platform-alerts@medicore-health.com',
             'WARNING: MediCore High Warehouse Queue Alert',
-            (SELECT OBJECT_CONSTRUCT(
-                'severity', 'WARNING',
-                'alert_name', 'ALERT_HIGH_WAREHOUSE_QUEUE',
-                'event_timestamp', CURRENT_TIMESTAMP()::VARCHAR,
-                'description', 'One or more warehouses have high query queue load',
-                'warehouses_affected', (
-                    SELECT ARRAY_AGG(OBJECT_CONSTRUCT(
-                        'warehouse_name', WAREHOUSE_NAME,
-                        'avg_queries_queued', AVG_QUERIES_QUEUED,
-                        'avg_queries_running', AVG_QUERIES_RUNNING,
-                        'peak_queries_queued', PEAK_QUERIES_QUEUED
-                    ))
-                    FROM MEDICORE_GOVERNANCE_DB.AUDIT.V_ACTIVE_WAREHOUSE_LOAD
-                    WHERE AVG_QUERIES_QUEUED > 5
-                ),
-                'recommended_action', 'Consider increasing warehouse size or enabling multi-cluster scaling.'
-            )::VARCHAR)
+            'One or more warehouses have high query queue load. Consider scaling or workload redistribution.'
         );
 
 
@@ -281,41 +197,7 @@ CREATE OR REPLACE ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_MONTHLY_COST_SPIKE
         CALL SYSTEM$SEND_EMAIL(
             'platform-alerts@medicore-health.com',
             'CRITICAL: MediCore Monthly Cost Spike Alert',
-            (SELECT OBJECT_CONSTRUCT(
-                'severity', 'CRITICAL',
-                'alert_name', 'ALERT_MONTHLY_COST_SPIKE',
-                'event_timestamp', CURRENT_TIMESTAMP()::VARCHAR,
-                'description', 'Current month credit consumption exceeds 120% of previous month',
-                'cost_comparison', (
-                    SELECT OBJECT_CONSTRUCT(
-                        'current_month', DATE_TRUNC('MONTH', CURRENT_DATE())::VARCHAR,
-                        'current_month_credits', current_month_credits,
-                        'previous_month_credits', previous_month_credits,
-                        'percentage_increase', ROUND((current_month_credits / NULLIF(previous_month_credits, 0) - 1) * 100, 2)
-                    )
-                    FROM (
-                        SELECT
-                            SUM(CASE WHEN USAGE_MONTH = DATE_TRUNC('MONTH', CURRENT_DATE()) THEN TOTAL_CREDITS ELSE 0 END) AS current_month_credits,
-                            SUM(CASE WHEN USAGE_MONTH = DATE_TRUNC('MONTH', DATEADD('MONTH', -1, CURRENT_DATE())) THEN TOTAL_CREDITS ELSE 0 END) AS previous_month_credits
-                        FROM MEDICORE_GOVERNANCE_DB.AUDIT.V_COST_BY_WAREHOUSE_MONTH
-                    )
-                ),
-                'top_consumers', (
-                    SELECT ARRAY_AGG(OBJECT_CONSTRUCT(
-                        'warehouse_name', WAREHOUSE_NAME,
-                        'total_credits', TOTAL_CREDITS,
-                        'estimated_cost_usd', ESTIMATED_COST_USD
-                    ))
-                    FROM (
-                        SELECT WAREHOUSE_NAME, TOTAL_CREDITS, ESTIMATED_COST_USD
-                        FROM MEDICORE_GOVERNANCE_DB.AUDIT.V_COST_BY_WAREHOUSE_MONTH
-                        WHERE USAGE_MONTH = DATE_TRUNC('MONTH', CURRENT_DATE())
-                        ORDER BY TOTAL_CREDITS DESC
-                        LIMIT 5
-                    )
-                ),
-                'recommended_action', 'Review warehouse usage patterns and identify cost drivers immediately.'
-            )::VARCHAR)
+            'Current month credit consumption exceeds 120% of previous month. Review cost drivers immediately.'
         );
 
 
@@ -360,15 +242,6 @@ GRANT OPERATE ON ALERT MEDICORE_GOVERNANCE_DB.AUDIT.ALERT_MONTHLY_COST_SPIKE TO 
 -- ============================================================
 
 SHOW ALERTS IN SCHEMA MEDICORE_GOVERNANCE_DB.AUDIT;
-
-SELECT
-    NAME AS ALERT_NAME,
-    STATE AS CURRENT_STATE,
-    SCHEDULE AS SCHEDULE_CRON,
-    CONDITION AS ALERT_CONDITION,
-    OWNER AS OWNER_ROLE
-FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
-ORDER BY NAME;
 
 
 -- ============================================================
